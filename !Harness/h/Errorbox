@@ -1,0 +1,3 @@
+
+extern int error_box(char *sprite, char *title, char *text, int icons, ...);
+extern void tracef(char *format, ...);

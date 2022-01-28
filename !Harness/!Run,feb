@@ -1,0 +1,9 @@
+set Harness$Dir <Obey$Dir>
+
+rmensure Toolbox 0.00 rmload System:Modules.Toolbox.Toolbox
+rmensure Menu 0.00 rmload System:Modules.Toolbox.Menu
+rmensure Treeview 0.19 rmload System:Modules.Toolbox.TreeView
+rmensure Tabs 0.09 rmload System:Modules.Toolbox.Tabs
+
+wimpslot -min 64k -max 64k
+/<Harness$Dir>.!RunImage %*0

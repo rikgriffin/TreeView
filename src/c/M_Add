@@ -1,0 +1,195 @@
+/* TreeView:M_Add.c		*/
+/* Rik Griffin Oct 2003		*/
+
+#include "Main.h"
+#include "Tree.h"
+
+
+#define DEBUGLEVEL	0
+
+
+static int IconList[] = { -1 };
+
+
+static const WindowTemplate Treeview_Window_Template = {
+  /* This is a block as passed to Toolbox_CreateObject for a Window object	*/
+    1<<1 | 1<<2, 		// flags (Auto open, auto close)
+    NULL,		// help_message
+    0, 			// max_help
+    NULL,		// pointer_shape
+    0,			// max_pointer_shape
+    0,			// pointer_x_hot
+    0,			// pointer_y_hot
+    NULL,		// no menu
+    0,			// num_keyboard_shortcuts
+    NULL,		// keyboard_shortcuts
+    0,			// num_gadgets
+    NULL,		// gadgets
+    -1,			// default_focus
+    0,			// show_event
+    0,			// hide_event
+    NULL,		// toolbar_ibl
+    NULL,		// toolbar_itl
+    NULL,		// toolbar_ebl
+    NULL,		// toolbar_etl
+    {
+        // WimpWindow struct
+        { 0, -100, 0, 0 },		// visible_area
+        0,				// xscroll
+        0,				// yscroll
+        -1,				// behind
+        WimpWindow_NewFormat  	 	// flags
+        | WimpWindow_NoBounds
+        | WimpWindow_ScrollRepeat
+//        | WimpWindow_VScroll
+//        | WimpWindow_HScroll
+//        | WimpWindow_AutoRedraw
+        ,
+        7,				// title_fg
+        2,				// title_bg
+        7,				// work_fg
+        0xff,				// work_bg
+        3,				// scroll_outer
+        1,				// scroll_inner
+        12,				// highlight_by
+        0,				// reserved
+        {0, (int)0x80000000, 0x7fffffff, 0},	// extent
+        0,				// title_flags
+        (10u << 12),			// work_flags, button type
+        0,				// sprite_area (1 = wimp)
+        1,				// min_width
+        1,				// min_height
+        {
+            // WimpIconData for title bar
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        },
+        0			// number of icons
+    }
+};
+
+
+static /*const*/ ObjectTemplateHeader Treeview_Object_Template = {
+  Window_ObjectClass,		// object_class
+  0,				// flags
+  102,				// version
+  "__treeview",			// name (limit 12 chars)
+  sizeof(ObjectTemplateHeader) + sizeof(WindowTemplate),	// total size
+  NULL,				// body
+  0				// size of body
+};
+
+
+/* called in response to the GADGET_ADD reason code from the Toolbox	*/
+/* has to return a handle and an icon list				*/
+/* If we don't create any icons (we don't) return a list containing -1	*/
+_kernel_oserror *gadget_add(TreeView *templ, ObjectId parent,
+unsigned int wimp_window, int *r_handle, int **r_icons) {
+  _kernel_oserror *e;
+  PrivateTreeView *me;		// our internal object
+
+  /* allocate memory from the Toolbox pool	*/
+  me = (PrivateTreeView *) _mem_allocate(sizeof(PrivateTreeView));
+  if (me == NULL) return (_kernel_oserror *)"   @No memory for TreeView gadget";
+
+  if (templ->colours.version == 0) {
+    /* old style template	*/
+    unsigned int *old = (unsigned int *)((char *)templ + sizeof(GadgetHeader));
+
+    DEBUG(DEBUGLEVEL, ("Loading old style template\n"));
+
+    me->foreground_wimp = (unsigned char) (old[0] & 0xf);
+    me->background_wimp = (unsigned char) (old[1] & 0xf);
+    me->linecolour_wimp = (unsigned char) (old[2] & 0xf);
+    me->vertical_spacing = old[3];
+    me->horizontal_spacing = 256;
+  } else if (templ->colours.version == 1) {
+    /* new style template	*/
+
+    DEBUG(DEBUGLEVEL, ("Loading new style template\n"));
+
+    me->foreground_wimp = templ->colours.foreground_wimp;
+    me->background_wimp = templ->colours.background_wimp;
+    me->linecolour_wimp = templ->colours.linecolour_wimp;
+    me->vertical_spacing = templ->vertical_spacing;
+    me->horizontal_spacing = templ->horizontal_spacing;
+
+  } else {
+    /* unknown template		*/
+    _mem_free(me);
+    return (_kernel_oserror *)"   @Bad TreeView template in resource file";
+  }
+
+  /* setup default state for the gadget		*/
+  me->box = templ->hdr.box;
+
+  /* fudge to compensate for plotting differences in ResEd	*/
+  /* (I think it doesn't account for the window border)		*/
+  me->box.xmin += 2;
+  me->box.ymin += 2;
+  me->box.xmax -= 2;
+  me->box.ymax -= 2;
+
+  me->parent_id = parent;
+  me->component_id = templ->hdr.component_id;
+  me->menu = 0;
+//  me->type = templ->hdr.type;
+  me->x_extent = me->y_extent = 0;
+
+  /* create a new window object			*/
+  {
+    WindowTemplate window;
+    ObjectTemplateHeader object;
+
+    window = Treeview_Window_Template;
+    object = Treeview_Object_Template;
+    object.body = &window;
+    object.body_size = sizeof(window);
+    window.window.work_fg = me->foreground_wimp;
+    window.window.work_bg = me->background_wimp;
+    window.window.sprite_area = (void *) 1;	// wimp area
+
+    EL(toolbox_create_object(1, &object, &me->object_id), e, fail);
+    EL(window_get_wimp_handle(0, me->object_id, &me->wimp_object), e, fail);
+  }
+
+  me->wimp_parent = wimp_window;
+
+  me->scrollbars = 0;
+
+  me->rows = me->cols = 0;
+
+  /* set up the root node	*/
+  (void) tree_node_add_root(me);
+  me->selection_base.node = NULL;
+  me->selection_base.next = NULL;
+
+  DEBUG(DEBUGLEVEL, ("New gadget, root node at %p\n", (void *)me->current_node));
+
+  /* return the things the toolbox needs	*/
+  if (r_handle != NULL) *r_handle = (int)me;
+  if (r_icons != NULL) *r_icons = IconList;
+
+  /* this merely adds the private data structure to a list
+     of all the current gadgets maintained by this module	*/
+  EL(_add_treeview_to_list(me), e, fail);
+
+  /* GLib functions to install Toolbox Post Filters	*/
+  add_task_interest(GLib_WimpEvents, Filter_WimpEvents, TreeView_Filter);
+//  add_task_interest(GLib_ToolboxEvents, Filter_ToolboxEvents, TreeView_Filter);
+//  add_task_interest(GLib_WimpMessages, Filter_WimpMessages, TreeView_Filter);
+
+  me->flags = 0;
+  EL(method_set_gadget_state(me, templ->hdr.flags), e, fail);
+
+  _show(me);
+
+  DEBUG(DEBUGLEVEL, ("Created TreeView gadget, handle %p, internal data:\n", (void *)me));
+  DEBUG(DEBUGLEVEL, ("  parent_id: %08x\n  component_id: %08x\n  object_id: %08x\n  flags: %08x\n", me->parent_id, me->component_id, me->object_id, me->flags));
+  DEBUG(DEBUGLEVEL, ("  wimp_object: %08x\n  wimp_parent: %08x\n  foreground: %08x\n  background: %08x\n", me->wimp_object, me->wimp_parent, me->foreground_wimp, me->background_wimp));
+
+  return NULL;
+
+fail:
+  _mem_free(me);
+  return e;
+}

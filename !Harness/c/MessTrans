@@ -1,0 +1,34 @@
+/* MessTrans.c		 	*/
+/* © R Griffin 2003		*/
+
+#include "Kernel.h"
+#include "Swis.h"
+
+#include "MessTrans.h"
+
+
+_kernel_oserror *messagetrans_file_info(char *file, int *mem, int *size) {
+
+  return _swix(MessageTrans_FileInfo, _IN(1) | _OUT(0) | _OUT(2), file, mem, size);
+}
+
+
+_kernel_oserror *messagetrans_open_file(MessagesFD *fd, char *file,
+void *buffer) {
+
+  return _swix(MessageTrans_OpenFile, _INR(0,2), fd, file, buffer);
+}
+
+
+_kernel_oserror *messagetrans_close_file(MessagesFD *fd) {
+
+  return _swix(MessageTrans_CloseFile, _IN(0), fd);
+}
+
+
+_kernel_oserror *messagetrans_lookup(MessagesFD *fd, char *token,
+char *buff, int buff_size) {
+
+  return _swix(MessageTrans_Lookup, _INR(0,7), fd, token, buff, buff_size,
+    0, 0, 0, 0);
+}

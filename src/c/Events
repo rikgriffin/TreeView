@@ -1,0 +1,125 @@
+/* TreeView:Events.c		*/
+/* Rik Griffin Nov 2003		*/
+
+#include "Main.h"
+#include "TreeFind.h"
+
+#define DEBUG_LEVEL	3
+
+
+/* select is 1 for selection and -1 for deselection	*/
+void send_selection_event(PrivateTreeView *me, TreeNode *node, int multiple,
+int select) {
+  TreeViewNodeSelectedEvent event;
+
+  event.hdr.size = sizeof(TreeViewNodeSelectedEvent);
+  event.hdr.event_code = TreeViewEvent_NodeSelected;
+  event.hdr.reference_number = 0;
+
+  event.hdr.flags =
+    (select == 1 ? TreeView_NodeSelected_Selected : 0) |
+    (multiple ? TreeView_NodeSelected_Multiple : 0);
+
+  event.node = (int) node;
+
+  toolbox_raise_toolbox_event(0, me->parent_id, me->component_id, (ToolboxEvent*)&event);
+}
+
+
+/* expand is 1 for expansion and 0 for unexpansion	*/
+void send_expand_event(PrivateTreeView *me, TreeNode *node, int expand) {
+  TreeViewNodeExpandedEvent event;
+
+  event.hdr.size = sizeof(TreeViewNodeExpandedEvent);
+  event.hdr.event_code = TreeViewEvent_NodeExpanded;
+  event.hdr.reference_number = 0;
+
+  event.hdr.flags = (expand ? TreeView_NodeExpanded_Expanded : 0);
+
+  event.node = (int) node;
+
+  toolbox_raise_toolbox_event(0, me->parent_id, me->component_id, (ToolboxEvent*)&event);
+}
+
+
+//void send_clicked_event(PrivateTreeView *me, TreeNode *node) {
+//  TreeViewNodeClickedEvent event;
+//
+//  event.hdr.size = sizeof(TreeViewNodeClickedEvent);
+//  event.hdr.event_code = TreeViewEvent_NodeClicked;
+//  event.hdr.reference_number = 0;
+//
+//  event.hdr.flags = 0;
+//
+//  event.node = (int) node;
+//
+//  toolbox_raise_toolbox_event(0, me->parent_id, me->component_id, (ToolboxEvent*)&event);
+//}
+
+
+void send_rename_event(PrivateTreeView *me, TreeNode *node) {
+  TreeViewNodeRenamedEvent event;
+
+  event.hdr.size = sizeof(TreeViewNodeRenamedEvent);
+  event.hdr.event_code = TreeViewEvent_NodeRenamed;
+  event.hdr.flags = 0;
+  event.hdr.reference_number = 0;
+
+  event.node = (int) node;
+
+  toolbox_raise_toolbox_event(0, me->parent_id, me->component_id, (ToolboxEvent*)&event);
+}
+
+
+void send_drag_event(PrivateTreeView *me, TreeNode *node, int count) {
+  _kernel_oserror *e;
+  TreeViewNodeDraggedEvent event;
+
+  event.hdr.size = sizeof(TreeViewNodeDraggedEvent);
+  event.hdr.reference_number = 0;
+  event.hdr.event_code = TreeViewEvent_NodeDragged;
+  event.hdr.flags = count > 1 ? TreeView_NodeDragged_MultipleSelection : 0;
+
+  event.mouse_buttons = DraggingButtons >> 4;
+
+  wimp_get_pointer_info(&event.destination);
+
+  if (event.destination.window_handle == me->wimp_object) {
+    /* drag ended in our gadget, find coords in our window		*/
+    int x, y;
+
+    x = event.destination.x;
+    y = event.destination.y;
+
+    EL(convert_screen_to_work(me, &x, &y), e, fail);
+
+    event.destination_node = (int) tree_find_node_at_coords(me, x, y, NULL);
+
+  } else {
+    /* drag was to outside gadget	*/
+    event.hdr.flags |= TreeView_NodeDragged_OutsideGadget;
+    event.destination_node = 0;
+  }
+
+  event.node = (int) node;
+
+  toolbox_raise_toolbox_event(0, me->parent_id, me->component_id,(ToolboxEvent*)&event);
+  return;
+
+fail:
+  DEBUG(0, ("error in send_drag_event: %s\n", e->errmess));
+}
+
+
+void send_scroll_event(PrivateTreeView *me, WimpOpenWindowBlock *block) {
+  TreeViewScrollEvent event;
+
+  event.hdr.size = sizeof(TreeViewScrollEvent);
+  event.hdr.event_code = TreeViewEvent_Scroll;
+  event.hdr.flags = 0;
+  event.hdr.reference_number = 0;
+
+  event.data = *block;
+
+  toolbox_raise_toolbox_event(0, me->parent_id, me->component_id, (ToolboxEvent*)&event);
+}

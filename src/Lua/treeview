@@ -1,0 +1,269 @@
+-- treeview gadget methods
+
+treeview = {
+
+setstate = \(self,object,component,gadgetflags)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4028
+        r[3] = component
+        r[4] = gadgetflags
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+getstate = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4029
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+setmenu = \(self,object,component,menu)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x403c
+        r[3] = component
+        r[4] = menu
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+addnode = \(self,flags,object,component,text)
+        local !,r in swi
+        r[0] = flags
+        r[1] = object
+        r[2] = 0x402a
+        r[3] = component
+        r[4] = text
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+getnodeid = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x402b
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+setnodetext = \(self,object,component,text)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x402c
+        r[3] = component
+        r[4] = text
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+setnodesprite = \(self,object,component,spritearea,spritename,extspritename)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x402d
+        r[3] = component
+        r[4] = spritearea
+        r[5] = spritename
+        r[6] = extspritename
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+setnodeprivateword = \(self,object,component,word)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x402e
+        r[3] = component
+        r[4] = word
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+getnodetext = \(self,object,component)
+        local buffer = block.new(8)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x402f
+        r[3] = component
+        r[4] = buffer
+        r[5] = 4*#buffer
+        local ok = !(0x44ec6)
+        => ok and buffer/0, ok and r[5]
+        end;
+
+getnodesprite = \(self,flags,object,component,buffer)
+        local !,r in swi
+        r[0] = flags
+        r[1] = object
+        r[2] = 0x4030
+        r[3] = component
+        r[4] = buffer
+        r[5] = 4*#buffer
+        local ok = !(0x44ec6)
+        => ok and r[5]
+        end;
+
+getnodeprivateword = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4031
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+moveto = \(self,object,component,node)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4032
+        r[3] = component
+        r[4] = node
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+movenext = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4033
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+moveprevious = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4034
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+movechild = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4035
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+moveparent = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4036
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+deletenode = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4037
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+deleteall = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4038
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+updatedisplay = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4039
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+movefirstselected = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x403a
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+movenextselected = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x403b
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+expandnode = \(self,flags,object,component)
+        local !,r in swi
+        r[0] = flags
+        r[1] = object
+        r[2] = 0x403d
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+selectnode = \(self,flags,object,component)
+        local !,r in swi
+        r[0] = flags
+        r[1] = object
+        r[2] = 0x403e
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+makevisible = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x403f
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok
+        end;
+
+findnode = \(self,object,component,x,y)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4040
+        r[3] = component
+        r[4] = x
+        r[5] = y
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+getnodestate = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4041
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+getwindowid = \(self,object,component)
+        local !,r in swi
+        r[1] = object
+        r[2] = 0x4042
+        r[3] = component
+        local ok = !(0x44ec6)
+        => ok and r[0]
+        end;
+
+}
+

@@ -1,0 +1,390 @@
+/* TreeView:RedrawFlat.c	*/
+/* Rik Griffin Aug 2008		*/
+
+#include <string.h>
+#include <limits.h>
+
+#include "Main.h"
+#include "Redraw.h"
+
+
+#define DEBUGLEVEL	3
+
+
+/* Plot one branch of the tree only	*/
+void plot_node_flat(WimpRedrawWindowBlock *block, PrivateTreeView *me, TreeNode *start) {
+  _kernel_oserror *e;
+  TreeNode *n;
+  int xbase, ybase, xsize, ysize;
+
+  IGNORE(me);
+
+  if (start == NULL) return;
+
+  xbase = block->visible_area.xmin - block->xscroll;
+  ybase = block->visible_area.ymax - block->yscroll;
+  xsize = block->visible_area.xmax - block->visible_area.xmin;
+  ysize = block->visible_area.ymax - block->visible_area.ymin;
+
+  /* ensure we start at one end of the branch	*/
+//  for (n = start; n->sorted.prev != NULL; n = n->sorted.prev);
+
+  for (n = start->parent->sorted.child; n != NULL; n = n->sorted.next) {
+
+    /* is node above the visible area?	*/
+    if (n->obox.ymin > block->yscroll) goto skip;
+    if (n->obox.ymax < (me->box.ymin - me->box.ymax + block->yscroll)) goto skip;
+
+    DEBUG(DEBUGLEVEL, ("plot node %p (%s) %s ", (void *)n, debug_node_text(n),
+      n->expand_child && n->child != NULL ? n->sprite_ex : n->sprite));
+
+    if (n->icon.flags != 0) {
+      if ((e = wimp_plot_icon(&n->icon)) != NULL) {
+        DEBUG(0, ("error from Wimp_PlotIcon: %s\n", e->errmess));
+      } else {
+        DEBUG(DEBUGLEVEL, ("done\n"));
+      }
+    }
+
+    if (n->text_icon.flags != 0) {
+      if ((e = wimp_plot_icon(&n->text_icon)) != NULL) {
+        DEBUG(0, ("error from Wimp_PlotIcon: %s\n", e->errmess));
+      } else {
+        DEBUG(DEBUGLEVEL, ("text icon done\n"));
+      }
+    }
+
+skip:
+    ;
+  } // end for (node)
+}
+
+
+/* Preprocess the text icon of a node, filling in the bounding box	*/
+/* based at 0,0 (it is moved to the correct position later).		*/
+static void make_text_icon(PrivateTreeView *me, TreeNode *n) {
+//  _kernel_oserror *e;
+  int textx, texty, font, len;
+  int block[10];
+  char *text;
+
+  /* Guard against nodes with no text	*/
+  if (n->text == NULL) text = "";
+  else text = n->text;
+
+  /* calculate the text bbox properly	*/
+  len = strlen(text);
+
+  /* get font handle of desktop font	*/
+  _swix(Wimp_ReadSysInfo, _IN(0) | _OUT(0), 8, &font);
+
+  if (font == 0) {
+    /* system font	*/
+    textx = len * 16 + 16;
+    texty = 44;
+  } else {
+    int w;
+
+    block[0] = 0;
+    block[1] = 0;
+    block[2] = 0;
+    block[3] = 0;
+    block[4] = -1;
+
+    _swix(Font_ScanString, _INR(0,7),
+      font, text, (1<<5) | (1<<7) | (1<<8) | (1<<9) | (1<<18), 0x7fffffff,0x7fffffff,
+      block, NULL, len);
+
+    _swix(Wimp_TextOp, _INR(0,2) | _OUT(0), 1, text, 0, &w);
+
+    textx = ((block[7] - block[5]) / 400) + 20;	// allow for icon border
+    texty = ((block[8] - block[6]) / 400) + 8;
+    DEBUG(DEBUGLEVEL, ("string bbox: %d %d %d %d  = %d x %d (Wimp_TextOp = %d)\n", block[5], block[6], block[7], block[8], textx, texty, w));
+  }
+
+  n->text_icon.data.it.buffer = text;
+  n->text_icon.data.it.validation = "";
+  n->text_icon.data.it.buffer_size = 1;	// len ?
+
+  n->text_icon.flags = 0
+        | WimpIcon_Text
+//        | WimpIcon_Sprite
+//        | WimpIcon_Border
+        | WimpIcon_HCentred
+        | WimpIcon_VCentred
+        | WimpIcon_Indirected
+//        | WimpIcon_RJustified
+        | (me->foreground_wimp * WimpIcon_FGColour)
+        | (me->background_wimp * WimpIcon_BGColour)
+        | WimpIcon_Filled
+        ;
+
+  if (me->current_node == n && me->flags & TreeView_ShowCurrentNode) {
+    n->text_icon.flags |= WimpIcon_Border;
+  }
+
+  n->text_icon.bbox.xmin = 0;
+  n->text_icon.bbox.ymin = 0;
+  n->text_icon.bbox.xmax = textx;
+  n->text_icon.bbox.ymax = texty;
+
+  DEBUG(DEBUGLEVEL, ("text bbox: %d %d %d %d\n", n->text_icon.bbox.xmin, n->text_icon.bbox.ymin, n->text_icon.bbox.xmax, n->text_icon.bbox.ymax));
+
+}
+
+
+/* Preprocess a node, filling in the details of the sprite icon block,	*/
+/* with the bounding box based at 0,0.					*/
+static void make_sprite_icon(PrivateTreeView *me, TreeNode *n) {
+  _kernel_oserror *e = NULL;
+  int sprx = 0, spry = 0, sprxeig = 0, spryeig = 0;
+  char *sprite;
+  SpriteArea *area;
+  SpriteCtrlBlock *spr;
+
+  DEBUG(DEBUGLEVEL, ("building icon for node %p (%s) sprite '%s'\n", (void *)n, debug_node_text(n), debug_node_sprite(n)));
+
+  /* choose which sprite (if an "expanded sprite" exists)	*/
+  if (n->expand_child && n->child != NULL && n->sprite_ex[0] != '\0') {
+    sprite = n->sprite_ex;
+  } else {
+    sprite = n->sprite;
+  }
+
+  /* find the sprite area and ctrl block ptrs of the source sprite	*/
+  /* The sprite may not exist, which is OK				*/
+  if ((int) n->sprite_area == 1) {
+    e = rikslib_find_wimp_sprite(sprite, &area, &spr);
+    DEBUG(DEBUGLEVEL, ("Sprite is in wimp area\n"));
+  } else {
+    area = n->sprite_area;
+    e = _swix(OS_SpriteOp, _INR(0,2) | _OUT(2), 0x118, area, sprite, &spr);
+    DEBUG(DEBUGLEVEL, ("Sprite is in user area %p\n", (void *)area));
+  }
+  if (e != NULL) {
+    area = NULL;
+    spr = NULL;
+  }
+
+  if (area != NULL && spr != NULL) {
+    if ((e = rikslib_sprite_eig_factors(spr, &sprxeig, &spryeig)) != NULL) {
+      DEBUG(0, ("error from OS_SpriteOp: %s\n", e->errmess));
+    } else {
+      DEBUG(DEBUGLEVEL, ("Sprite eigen values: %d %d\n", sprxeig, spryeig));
+    }
+    if ((e = _swix(OS_SpriteOp, _INR(0,2)|_OUTR(3,4), 0x228, area, spr, &sprx, &spry))
+    != NULL) {
+      DEBUG(0, ("error from OS_SpriteOp: %s\n", e->errmess));
+    }
+    sprx <<= sprxeig;
+    spry <<= spryeig;
+    DEBUG(DEBUGLEVEL, ("sprite '%s' size %d x %d\n", sprite, sprx, spry));
+
+    n->icon.data.is.sprite = sprite;
+    n->icon.data.is.sprite_area = n->sprite_area;
+    n->icon.data.is.sprite_name_length = 1;	//strlen(sprite);
+
+    /* we now know the size of the sprite, if it exists	*/
+    n->icon.flags = 0
+  //        | WimpIcon_Text
+          | WimpIcon_Sprite
+  //        | WimpIcon_Border
+          | WimpIcon_HCentred
+          | WimpIcon_VCentred
+          | WimpIcon_Indirected
+  //        | WimpIcon_RJustified
+          | (me->foreground_wimp * WimpIcon_FGColour)
+          | (me->background_wimp * WimpIcon_BGColour)
+  //        | WimpIcon_Filled
+          ;
+
+    if (me->current_node == n && me->flags & TreeView_ShowCurrentNode) {
+      n->icon.flags |= WimpIcon_Border;
+    }
+
+    n->icon.bbox.xmin = 0;
+    n->icon.bbox.ymin = 0;
+    n->icon.bbox.xmax = sprx;
+    n->icon.bbox.ymax = spry;
+
+  } else {
+    /* sprite doesn't exist	*/
+    n->icon.data.is.sprite = NULL;
+    n->icon.data.is.sprite_area = NULL;
+    n->icon.data.is.sprite_name_length = 0;
+
+    n->icon.flags = 0;
+    n->icon.bbox.xmin = INT_MAX;
+    n->icon.bbox.ymin = INT_MAX;
+    n->icon.bbox.xmax = -1;
+    n->icon.bbox.ymax = -1;
+  }
+
+  DEBUG(DEBUGLEVEL, ("sprite bbox: %d %d %d %d\n", n->icon.bbox.xmin,
+    n->icon.bbox.ymin, n->icon.bbox.xmax, n->icon.bbox.ymax));
+}
+
+
+/*
+ * TreeView_TextBelowSprite flag is set
+ * Arrange icons in the style of the Filer's "large icons" display
+*/
+static void layout_icons_flat_1(PrivateTreeView *me, TreeNode *start, int xbase, int ybase, int xsize_max, int ysize_max, int spr_ysize_max, int txt_ysize_max, int xextent, int *r_yextent) {
+  TreeNode *n;
+  int x, y1, y, col;
+
+  x = xbase + me->horizontal_spacing;
+  y = ybase - me->vertical_spacing;
+  col = 0;
+  me->rows = me->cols = 0;
+
+  /* go through all the nodes setting the bboxes correctly	*/
+  for (n = start->parent->sorted.child; n != NULL; n = n->sorted.next) {
+
+    y1 = y;
+
+    if (n->icon.flags != 0) {
+      /* sprite exists	*/
+
+      n->icon.bbox.xmin = x + (xsize_max - n->icon.bbox.xmax) / 2;
+      n->icon.bbox.xmax += n->icon.bbox.xmin;
+      n->icon.bbox.ymax = y;
+      n->icon.bbox.ymin = y - spr_ysize_max;
+
+      y1 -= spr_ysize_max + Y_GAP;
+    }
+
+    if (n->text_icon.flags != 0) {
+      /* text exists	*/
+      n->text_icon.bbox.xmin = x + (xsize_max - n->text_icon.bbox.xmax) / 2;
+      n->text_icon.bbox.xmax += n->text_icon.bbox.xmin;
+      n->text_icon.bbox.ymax = y1;
+      n->text_icon.bbox.ymin = y1 - txt_ysize_max;
+    }
+
+    calc_overall_bbox(n);
+
+    x += xsize_max + me->horizontal_spacing;
+    if (++col > me->cols) me->cols = col;
+
+    if (x + xsize_max > xextent || n->sorted.next == NULL) {
+      /* wrap round (or last node)	*/
+      x = xbase + me->horizontal_spacing;
+      y -= ysize_max + me->vertical_spacing;
+      me->rows++;
+      col = 0;
+    }
+
+  } // end for (node)
+
+  *r_yextent = y;
+}
+
+
+/*
+ * TreeView_TextBelowSprite flag is clear
+ * Arrange icons in the style of the Filer's "small icons" display
+ * ie text to the right of the sprite
+*/
+static void layout_icons_flat_2(PrivateTreeView *me, TreeNode *start, int xbase, int ybase, int xsize_max, int ysize_max, int spr_xsize_max, int xextent, int *r_yextent) {
+  TreeNode *n;
+  int x, x1, y, col;
+
+  x = xbase + me->horizontal_spacing;
+  y = ybase - me->vertical_spacing;
+  col = 0;
+  me->rows = me->cols = 0;
+
+  for (n = start->parent->sorted.child; n != NULL; n = n->sorted.next) {
+
+    x1 = x;
+
+    if (n->icon.flags != 0) {
+      /* sprite exists	*/
+      n->icon.bbox.xmin = x;
+      n->icon.bbox.xmax = x + spr_xsize_max;
+      n->icon.bbox.ymax = y;
+      n->icon.bbox.ymin = y - ysize_max;
+
+      x1 += spr_xsize_max + X_GAP;
+    }
+
+    if (n->text_icon.flags != 0) {
+      /* text exists	*/
+      int ysize = n->text_icon.bbox.ymax;
+
+      n->text_icon.bbox.xmin = x1;
+      n->text_icon.bbox.xmax += x1;
+      /* add a small space above and below the text	*/
+      n->text_icon.bbox.ymax = y - (ysize_max - ysize) / 2 + 4;
+      n->text_icon.bbox.ymin = n->text_icon.bbox.ymax - ysize - 4;
+    }
+
+    calc_overall_bbox(n);
+
+    x += xsize_max + me->horizontal_spacing;
+    if (++col > me->cols) me->cols = col;
+
+    if (x + xsize_max > xextent || n->sorted.next == NULL) {
+      /* wrap round (or last node)	*/
+      x = xbase + me->horizontal_spacing;
+      y -= ysize_max + me->vertical_spacing;
+      me->rows++;
+      col = 0;
+    }
+
+
+  } // end for (node)
+
+  *r_yextent = y;
+}
+
+
+/* xmax on entry contains x size of window. We wrap in the x direction	*/
+/* like the Filer does.							*/
+/* In flat mode there are no expand icons or lines.			*/
+/* Returns non zero if the layout of the nodes has changed.		*/
+int make_icons_flat(PrivateTreeView *me, TreeNode *start, int xbase, int ybase, int xextent, int *r_yextent) {
+  TreeNode *n;
+  int spr_xsize_max, spr_ysize_max, txt_xsize_max, txt_ysize_max;
+  int xsize_max, ysize_max, rows, cols;
+
+  if (start == NULL) return 0;
+
+  rows = me->rows;
+  cols = me->cols;
+
+  /* move to the first node in the branch				*/
+//  for (n = start; n->sorted.prev != NULL; n = n->sorted.prev);
+//  start = n;
+
+  /* First scan all nodes to find the max dimensions of a node		*/
+  xsize_max = spr_xsize_max = txt_xsize_max = 0;
+  ysize_max = spr_ysize_max = txt_ysize_max = 0;
+
+  for (n = start->parent->sorted.child; n != NULL; n = n->sorted.next) {
+    make_sprite_icon(me, n);
+    if (n->icon.bbox.xmax > spr_xsize_max) spr_xsize_max = n->icon.bbox.xmax;
+    if (n->icon.bbox.ymax > spr_ysize_max) spr_ysize_max = n->icon.bbox.ymax;
+
+    make_text_icon(me, n);
+    if (n->text_icon.bbox.xmax > txt_xsize_max) txt_xsize_max = n->text_icon.bbox.xmax;
+    if (n->text_icon.bbox.ymax > txt_ysize_max) txt_ysize_max = n->text_icon.bbox.ymax;
+  }
+
+  /* the "sorted list" is used for display but it might not be sorted	*/
+  make_sorted_list(me, start);
+
+  /* layout the icons in their proper places	*/
+  if (me->flags & TreeView_TextBelowSprite) {
+    xsize_max = MAX(spr_xsize_max, txt_xsize_max);
+    ysize_max = spr_ysize_max + Y_GAP + txt_ysize_max;
+    layout_icons_flat_1(me, start, xbase, ybase, xsize_max, ysize_max, spr_ysize_max, txt_ysize_max, xextent, r_yextent);
+  } else {
+    xsize_max = spr_xsize_max + X_GAP + txt_xsize_max;
+    ysize_max = MAX(spr_ysize_max, txt_ysize_max);
+    layout_icons_flat_2(me, start, xbase, ybase, xsize_max, ysize_max, spr_xsize_max, xextent, r_yextent);
+  }
+
+  return (me->rows != rows || me->cols != cols);
+}

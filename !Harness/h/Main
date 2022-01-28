@@ -1,0 +1,89 @@
+/* Harness.Main.h		*/
+/* © Rik Griffin Mar 2000	*/
+
+#include "C:Kernel.h"
+#include "C:Swis.h"
+
+#include "C:Toolbox.h"
+#include "C:Event.h"
+#include "C:wimp.h"
+#include "C:wimplib.h"
+#include "C:gadgets.h"
+#include "C:quit.h"
+#include "C:window.h"
+#include "C:Menu.h"
+
+#include "Consts.h"
+
+#define ER(x,e) if ((e = (x)) != NULL) return e
+#define EL(x, e, l) if ((e = (x)) != NULL) goto l
+#define EC(x,e) if ((e = (x)) != NULL) do { report_error(e); goto efail; } while(0)
+
+
+typedef struct {
+  int size;
+  int num_sprites;
+  int sprite_offset;
+  int free_offset;
+} sprite_area;
+
+typedef struct {
+  int next_sprite;
+  char name[12];
+  int width;
+  int height;
+  int first_bit_used;
+  int last_bit_used;
+  int image_offset;
+  int mask_offset;
+  int mode;
+} sprite_ctrl_block;
+
+
+#define MAINPANE_COUNT	1
+
+typedef struct {
+  ObjectId	MainWindow;
+  ObjectId	Menu;
+  ObjectId	MainPane[MAINPANE_COUNT];
+} object_id_block;
+
+#ifdef __harness_main_c
+ #define ex
+ #define def(x) = x
+#else
+ #define ex extern
+ #define def(x)
+#endif
+
+ex int			Quit		def(0);
+ex MessagesFD		Messages;
+ex int			Wimp_Version	def(0);
+ex int			Task_Handle	def(0);
+
+ex unsigned int		Poll_Idle_Delay	def(100);
+
+
+ex object_id_block	Objects;
+
+ex sprite_area		*Sprite_Area	def(NULL);
+ex sprite_ctrl_block	*Sprite		def(NULL);
+
+#undef ex
+#undef def
+
+extern int inkey(int);
+extern char *find_leaf(char *path);
+
+extern char *lookup(char *token);
+extern void slookupf(char *buffer, char *token, ...);
+
+extern void report_error(_kernel_oserror *e);
+extern void report_error1(_kernel_oserror *e);
+extern void report(char *token);
+extern void vreport(char *token, ...);
+extern void vreport_raw(char *format, ...);
+
+/* returns 1 for a, 2 for b	*/
+extern int question_box(char *token, char *a, char *b);
+extern int vquestion_box(char *token, char *a, char *b, ...);

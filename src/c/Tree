@@ -1,0 +1,587 @@
+/* TreeView:Tree.c		*/
+/* Rik Griffin Aug 2008		*/
+
+#include <string.h>
+
+#include "Main.h"
+#include "Tree.h"
+#include "Redraw.h"
+
+#define DEBUGLEVEL	1
+
+#define NODE_MAGIC	0x45444f4e	// 'NODE'
+#define ROOT_MAGIC	0x544f4f52	// 'ROOT'
+
+
+/* 24 Nov 2004 - added node validation to all functions		*/
+
+#if 0
+static void expand_child_list(TreeNode *parent) {
+
+  if (parent->sorted_child_list == NULL) {
+    parent->sorted_child_list = _mem_allocate(sizeof(TreeNode *) * SORT_LIST_CHUNK);
+  } else {
+    void *n;
+    /* MemCheck doesn't like mem_extend	*/
+
+    if ((n =_mem_allocate(sizeof(TreeNode *) * (parent->sorted_list_size + SORT_LIST_CHUNK))) == NULL) {
+      DEBUG(0, ("memory allocation failed in expand_child_list\n"));
+      return;
+    }
+
+    memcpy(n, parent->sorted_child_list, sizeof(TreeNode *) * parent->sorted_list_size);
+    _mem_free(parent->sorted_child_list);
+    parent->sorted_child_list = n;
+  }
+
+  parent->sorted_list_size += SORT_LIST_CHUNK;
+  DEBUG(DEBUGLEVEL, ("Expanded child list for node %x (%s) to size %d\n", parent, debug_node_text(parent), parent->sorted_list_size));
+}
+#endif
+
+
+/* starting from a particular node, deletes all its siblings	*/
+/* and all its children. Doesn't affect parent nodes.		*/
+/* Can't (and won't) be called for the root node.		*/
+static _kernel_oserror *tree_delete_branch(PrivateTreeView *me, TreeNode *start) {
+  TreeNode *n, *next;
+
+  DEBUG(DEBUGLEVEL, ("tree_delete_branch: %p\n", (void *)start));
+
+  if (start == NULL) return NULL;
+  /* find the first node on the branch	*/
+  for (n = start; n->prev != NULL; n = n->prev);
+
+  /* parent is guaranteed to exist as this is never called for root node	*/
+  n->parent->child_count = 0;
+  n->parent->child = NULL;
+  n->parent->sorted.child = NULL;
+  n->parent->sorted.valid = 0;
+
+  while (n != NULL) {
+
+    if (n->child != NULL) tree_delete_branch(me, n->child);
+
+    DEBUG(DEBUGLEVEL, ("freeing node %p (%s)\n", (void *)n, debug_node_text(n)));
+    next = n->next;
+
+    DEBUG(DEBUGLEVEL, ("Node %p (%s) now has %d children\n", (void *)n->parent, debug_node_text(n->parent), n->parent->child_count));
+
+    if (n->text != NULL) _mem_free(n->text);
+//    if (n->sorted_child_list != NULL) _mem_free(n->sorted_child_list);
+
+    n->magic = 0;
+    _mem_free(n);
+
+    n = next;
+  }
+
+  return NULL;
+}
+
+
+/* deleting a node also deletes any children it has	*/
+/* otherwise they would be left without a reference	*/
+_kernel_oserror *tree_delete_node(PrivateTreeView *me, TreeNode *node) {
+//  _kernel_oserror *e;
+
+  if (node == NULL || (node != NULL && node->magic != NODE_MAGIC)) {
+    return (_kernel_oserror *)"   @Bad node ID";
+  }
+
+  DEBUG(DEBUGLEVEL, ("tree_delete_node: %p (%s)\n", (void *)node, debug_node_text(node)));
+
+  /* is this the root node we're deleting?	*/
+  if (me->root_node == node) {
+    DEBUG(DEBUGLEVEL, ("delete root node\n"));
+    _delete_all_selection(me);
+    (void) tree_delete_branch(me, node->child);
+    return NULL;
+  }
+
+  if (node->child != NULL) {
+    (void) tree_delete_branch(me, node->child);
+  }
+
+  /* remove the selection for this node if it exists	*/
+  remove_selection_node(me, node, 0);
+
+  /* all nodes should have a parent but check just in case	*/
+  if (node->parent != NULL) {
+    if (node->parent->child == node) {
+      /* create a link from this node's parent to one if its siblings	*/
+      if (node->next != NULL) node->parent->child = node->next;
+      else if (node->prev != NULL) node->parent->child = node->prev;
+      else node->parent->child = NULL;
+    }
+
+    /* Preserve the integrity of the sorted list, but it's no longer sorted	*/
+    if (node->parent->sorted.child == node) {
+      if (node->sorted.next != NULL) node->parent->sorted.child = node->sorted.next;
+      else if (node->sorted.prev != NULL) node->parent->sorted.child = node->sorted.prev;
+      else node->parent->sorted.child = NULL;
+    }
+    node->parent->sorted.valid = 0;
+
+    node->parent->child_count--;
+    DEBUG(DEBUGLEVEL, ("Node %p (%s) now has %d children\n", (void *)node->parent, debug_node_text(node->parent), node->parent->child_count));
+  } else {
+    DEBUG(0, ("*** Node %p (%s) has no parent!\n", (void *)node, debug_node_text(node)));
+  }
+
+  /* Remove node from linked list	*/
+  if (node->prev != NULL) node->prev->next = node->next;
+  if (node->next != NULL) node->next->prev = node->prev;
+
+  /* Remove node from sorted linked list	*/
+  if (node->sorted.prev != NULL) node->sorted.prev->sorted.next = node->sorted.next;
+  if (node->sorted.next != NULL) node->sorted.next->sorted.prev = node->sorted.prev;
+
+  DEBUG(DEBUGLEVEL, ("freeing node %p (%s)\n", (void *)node, debug_node_text(node)));
+
+  node->magic = 0;
+  if (node->text != NULL) _mem_free(node->text);
+//  if (node->sorted_child_list != NULL) _mem_free(node->sorted_child_list);
+  _mem_free(node);
+
+  return NULL;
+}
+
+
+/* create the root node for a tree	*/
+TreeNode *tree_node_add_root(PrivateTreeView *me) {
+  TreeNode *node;
+
+  if ((node = _mem_allocate(sizeof(TreeNode))) == NULL) return NULL;
+  node->magic = NODE_MAGIC;
+
+  node->next = NULL;
+  node->prev = NULL;
+  node->child = NULL;
+  node->parent = node;
+
+  node->sorted.valid = 0;
+  node->sorted.child = NULL;
+  node->sorted.prev = NULL;
+  node->sorted.next = NULL;
+
+//  node->sorted_child_list = NULL;
+//  node->sorted_list_size = 0;
+  node->child_count = 0;
+
+  node->sprite_area = NULL;
+  node->sprite[0] = '\0';
+  node->sprite_ex[0] = '\0';
+
+  /* allow root node's text to be changed in future	*/
+  node->text = _mem_allocate(8);
+  strcpy(node->text, "Root");
+
+  node->private_word = 0;
+  node->expand_child = 1;
+
+  node->icon.flags = 0;
+  node->text_icon.flags = 0;
+  node->expand_icon.flags = 0;
+
+  me->root_node = node;
+  me->current_node = node;
+
+  DEBUG(DEBUGLEVEL, ("Created root node: %p (%s)\n", (void *)node, debug_node_text(node)));
+
+  return node;
+}
+
+
+static TreeNode *allocate_node(PrivateTreeView *me) {
+  TreeNode *node;
+
+  if ((node = _mem_allocate(sizeof(TreeNode))) == NULL) return NULL;
+  node->magic = NODE_MAGIC;
+  node->sprite[0] = '\0';
+  node->sprite_ex[0] = '\0';
+  node->text = NULL;
+  node->expand_child = ((me->flags & TreeView_ExpandByDefault) != 0);
+
+//  node->sorted_child_list = NULL;
+//  node->sorted_list_size = 0;
+  node->child_count = 0;
+
+  return node;
+}
+
+
+/* If current node is NULL, we can't create a new node	*/
+TreeNode *tree_node_add(PrivateTreeView *me) {
+  TreeNode *node;
+
+  DEBUG(DEBUGLEVEL, ("tree_node_add\n"));
+
+  if (me->current_node == NULL || me->root_node == NULL) {
+    DEBUG(0, ("Attempt to create new node with no valid current / root node\n"));
+    return NULL;
+  }
+
+  /* Can't add a sibling to the root node. It actually gets added as a sibling	*/
+  /* to the root's child (if there is one), or if not, as a child to the root.	*/
+  if (me->current_node == me->root_node) {
+    if (me->root_node->child != NULL) tree_set_current_node(me, me->root_node->child);
+    else return tree_node_add_child(me);
+  }
+
+  if ((node = allocate_node(me)) == NULL) return NULL;
+
+  /* node is inserted between the current node and current->next	*/
+  node->next = me->current_node->next;
+  node->prev = me->current_node;
+
+  if (me->current_node->next != NULL) me->current_node->next->prev = node;
+  me->current_node->next = node;
+
+  /* all nodes share the same parent as their siblings	*/
+  node->parent = me->current_node->parent;
+  node->child = NULL;
+
+  /* Add new node into the sorted linked list (but not in its correct place)	*/
+  node->sorted.valid = 0;
+  node->sorted.child = NULL;
+  node->sorted.next = me->current_node->sorted.next;
+  node->sorted.prev = me->current_node;
+  if (me->current_node->sorted.next != NULL) me->current_node->sorted.next->sorted.prev = node;
+  me->current_node->sorted.next = node;
+
+  node->parent->sorted.valid = 0;
+  node->parent->child_count++;
+  DEBUG(DEBUGLEVEL, ("Node %p (%s) now has %d children\n", (void *)node->parent, debug_node_text(node->parent), node->parent->child_count));
+
+  /* allocate memory for the sorted list of child nodes, in the parent	*/
+//  if (++node->parent->child_count >= node->parent->sorted_list_size) {
+//    expand_child_list(node->parent);
+//  }
+//  DEBUG(DEBUGLEVEL, ("Node %x (%s) now has %d children (list size %d)\n", node->parent, debug_node_text(node->parent), node->parent->child_count, node->parent->sorted_list_size));
+
+  /* new node becomes the current node		*/
+  tree_set_current_node(me, node);
+
+  DEBUG(DEBUGLEVEL, ("allocated new node at %p,  next %p  prev %p  child %p  parent %p\n", (void *)node, (void *)node->next, (void *)node->prev, (void *)node->child, (void *)node->parent));
+
+  return node;
+}
+
+
+TreeNode *tree_node_add_child(PrivateTreeView *me) {
+  TreeNode *node, *e;
+
+  DEBUG(DEBUGLEVEL, ("tree_node_add_child\n"));
+
+  if (me->current_node == NULL || me->root_node == NULL) {
+    DEBUG(0, ("Attempt to create new node with no valid current / root node\n"));
+    return NULL;
+  }
+
+  /* If current node already has a child, add the new node as a sibling to it	*/
+/*
+  if (me->current_node->child != NULL) {
+    DEBUG(DEBUGLEVEL, ("Current node has child, adding new node as sibling\n"));
+    tree_set_current_node(me, me->current_node->child);
+    return tree_node_add(me);
+  }
+*/
+
+  if ((node = allocate_node(me)) == NULL) return NULL;
+
+  /*
+   * New node is inserted as a child to the current one.
+   * If current node already had a child, it becomes the sibling of the new node.
+  */
+  e = me->current_node->child;		// current child (may be NULL)
+
+  node->parent = me->current_node;
+  me->current_node->child = node;
+  node->child = NULL;
+  node->next = e;
+  if (e != NULL) {
+    if (e->prev != NULL) DEBUG(0, ("*** old child node already has a prev\n"));
+    else e->prev = node;
+  }
+  node->prev = NULL;
+
+  me->current_node->sorted.child = node;
+  node->sorted.next = NULL;
+  node->sorted.prev = NULL;
+
+  node->parent->sorted.valid = 0;
+  node->parent->child_count++;
+  DEBUG(DEBUGLEVEL, ("Node %p (%s) now has %d children\n", (void *)node->parent, debug_node_text(node->parent), node->parent->child_count));
+
+  /* allocate memory for the sorted list of child nodes, in the parent	*/
+//  if (++node->parent->child_count >= node->parent->sorted_list_size) {
+//    expand_child_list(node->parent);
+//  }
+//  DEBUG(DEBUGLEVEL, ("Node %x (%s) now has %d children (list size %d)\n", node->parent, debug_node_text(node->parent), node->parent->child_count, node->parent->sorted_list_size));
+/*
+  if (node->parent->child_count != 1) {
+    DEBUG(0, ("Something is wrong - this node's parent (%p %s) should only have 1 child\n", (void *)node->parent, debug_node_text(node->parent)));
+  }
+*/
+
+  /* new node becomes the current node		*/
+  tree_set_current_node(me, node);
+
+  DEBUG(DEBUGLEVEL, ("allocated new child node at %p,  next %p  prev %p  child %p  parent %p\n", (void *)node, (void *)node->next, (void *)node->prev, (void *)node->child, (void *)node->parent));
+
+  return node;
+}
+
+
+_kernel_oserror *tree_node_set_sprite(TreeNode *node, SpriteArea *area, char *sprite, char *ex_sprite) {
+
+  if (node == NULL || (node != NULL && node->magic != NODE_MAGIC)) {
+    return (_kernel_oserror *)"   @Bad node ID";
+  }
+
+  node->parent->sorted.valid = 0;
+
+  node->sprite_area = area;
+
+  if (sprite != NULL) {
+    rikslib_strncpy(node->sprite, sprite, 12);
+  } else {
+    node->sprite[0] = '\0';
+  }
+
+  if (ex_sprite != NULL) {
+    rikslib_strncpy(node->sprite_ex, ex_sprite, 12);
+  } else {
+    node->sprite_ex[0] = '\0';
+  }
+
+  DEBUG(DEBUGLEVEL, ("node sprite: %s  expanded sprite: %s\n", node->sprite, node->sprite_ex));
+
+  return NULL;
+}
+
+
+_kernel_oserror *tree_node_set_text(TreeNode *node, char *text) {
+  int len;
+
+  if (node == NULL || (node != NULL && node->magic != NODE_MAGIC)) {
+    return (_kernel_oserror *)"   @Bad node ID";
+  }
+
+  node->parent->sorted.valid = 0;
+
+  if (node->text != NULL) {
+    _mem_free(node->text);
+    node->text = NULL;
+  }
+
+  if (text != NULL) {
+    len = strlen(text);
+    if ((node->text = _mem_allocate(len + 1)) == NULL) {
+      return (_kernel_oserror *)"   @malloc failed";
+    }
+    memcpy(node->text, text, len + 1);
+  }
+
+  DEBUG(DEBUGLEVEL, ("node %p text set to '%s'\n", (void *)node, debug_node_text(node)));
+
+  return NULL;
+}
+
+
+_kernel_oserror *tree_node_get_text_length(TreeNode *node, int *size) {
+
+  if (node == NULL || (node != NULL && node->magic != NODE_MAGIC)) {
+    return (_kernel_oserror *)"   @Bad node ID";
+  }
+
+  if (node->text != NULL) {
+    *size = strlen(node->text) + 1;
+  } else {
+    *size = 0;
+  }
+
+  return NULL;
+}
+
+
+/* nbytes may be a pointer to buffsize	*/
+_kernel_oserror *tree_node_get_text(TreeNode *node, char *buffer, int buffsize, int *nbytes) {
+  int i, len;
+
+  if (node == NULL || (node != NULL && node->magic != NODE_MAGIC)) {
+    return (_kernel_oserror *)"   @Bad node ID";
+  }
+
+  DEBUG(DEBUGLEVEL, ("tree_node_get_text: "));
+
+  if (node->text != NULL) {
+    len = strlen(node->text);
+
+    DEBUG(DEBUGLEVEL, ("text: '%s' len: %d ", debug_node_text(node), len));
+
+    for (i = 0; i < len && i < buffsize; i++) {
+      buffer[i] = node->text[i];
+      if (buffer[i] == '\0') break;
+    }
+    if (i == len) buffer[i] = '\0';
+
+    DEBUG(DEBUGLEVEL, ("%s\n", buffer));
+
+    if (nbytes != NULL) *nbytes = i;
+  } else {
+    if (buffsize > 0) {
+      buffer[0] = '\0';
+      if (nbytes != NULL) *nbytes = 1;
+    }
+  }
+
+  return NULL;
+}
+
+
+_kernel_oserror *tree_node_get_sprite_length(TreeNode *node, unsigned int flags, int *size) {
+  char *spr;
+
+  if (node == NULL || (node != NULL && node->magic != NODE_MAGIC)) {
+    return (_kernel_oserror *)"   @Bad node ID";
+  }
+
+  if (flags & 1) spr = node->sprite_ex;
+  else spr = node->sprite;
+
+  *size = strlen(spr) + 1;
+
+  return NULL;
+}
+
+
+/* nbytes may be a pointer to buffsize	*/
+_kernel_oserror *tree_node_get_sprite(TreeNode *node, unsigned int flags,  char *buffer, int buffsize, int *nbytes) {
+  int i, len;
+  char *spr;
+
+  if (node == NULL || (node != NULL && node->magic != NODE_MAGIC)) {
+    return (_kernel_oserror *)"   @Bad node ID";
+  }
+
+  if (flags & 1) spr = node->sprite_ex;
+  else spr = node->sprite;
+
+  len = strlen(spr);
+
+  for (i = 0; i < len && i < buffsize; i++) {
+    buffer[i] = spr[i];
+    if (buffer[i] == '\0') break;
+  }
+  if (i == len) buffer[i] = '\0';
+
+  if (nbytes != NULL) *nbytes = i;
+
+  return NULL;
+}
+
+
+/* node cannot be NULL	*/
+_kernel_oserror *tree_set_current_node(PrivateTreeView *me, TreeNode *node) {
+
+  DEBUG(DEBUGLEVEL, ("tree_set_current_node: %p\n", (void *)node));
+
+  if (node == NULL) {
+    DEBUG(0, ("tree_set_current_node: NULL node\n"));
+    return (_kernel_oserror *)"   @Bad node handle (may not be NULL)";
+  }
+
+  if (node->magic != NODE_MAGIC) {
+    DEBUG(0, ("tree_set_current_node: guard word wrong\n"));
+    return (_kernel_oserror *)"   @Bad node ID (guard word wrong)";
+  }
+
+  if (me->flags & TreeView_ShowCurrentNode) {
+
+    /* turn off border for previous current node's icon	*/
+    if (me->current_node != NULL) {
+      me->current_node->icon.flags &= ~WimpIcon_Border;
+      me->current_node->text_icon.flags &= ~WimpIcon_Border;
+      _force_redraw_node(me, me->current_node);
+    }
+
+    /* turn on border for new node's icon	*/
+    if (node != NULL) {
+      if (node->icon.flags != 0) node->icon.flags |= WimpIcon_Border;
+      if (node->text_icon.flags != 0) node->text_icon.flags |= WimpIcon_Border;
+      _force_redraw_node(me, node);
+    }
+  }
+
+  /* we should validate this somehow	*/
+  me->current_node = node;
+
+  return NULL;
+}
+
+
+_kernel_oserror *tree_move_first_selected(PrivateTreeView *me) {
+  _kernel_oserror *e;
+  SelectionNode *s;
+
+  s = me->selection_base.next;
+
+  if (s != NULL && s->node != NULL) {
+    ER(tree_set_current_node(me, s->node), e);
+  } else {
+    e = (_kernel_oserror *)"   @No selection";
+  }
+
+  return e;
+}
+
+
+_kernel_oserror *tree_move_next_selected(PrivateTreeView *me) {
+  _kernel_oserror *e;
+  SelectionNode *s;
+
+  s = find_selection_node(me, me->current_node);
+
+  if (s != NULL && s->next != NULL && s->next->node != NULL) {
+    ER(tree_set_current_node(me, s->next->node), e);
+  } else {
+    e = (_kernel_oserror *)"   @End of selection";
+  }
+
+  return e;
+}
+
+
+/* flag is: -1 to toggle, 0 to collapse and 1 to expand	*/
+_kernel_oserror *tree_expand_node(PrivateTreeView *me, TreeNode *node, int flag, int redraw) {
+  _kernel_oserror *e;
+
+  if (node == NULL || (node != NULL && node->magic != NODE_MAGIC)) {
+    return (_kernel_oserror *)"   @Bad node ID";
+  }
+
+  DEBUG(DEBUGLEVEL, ("tree_expand_node: %p %s\n", (void *)node, debug_node_text(node)));
+
+  if (node->child == NULL) {
+    /* can't expand a node with no children but just ignore it	*/
+    return NULL;
+  }
+
+  if (flag == -1) {
+    /* toggle	*/
+    node->expand_child = !node->expand_child;
+  } else {
+    node->expand_child = (flag != 0);
+  }
+
+  if (me->flags & TreeView_NotifyExpansion) {
+    send_expand_event(me, node, node->expand_child);
+  }
+
+  if (redraw) {
+    ER(_make_icons(me, 1), e);
+  }
+  return NULL;
+}

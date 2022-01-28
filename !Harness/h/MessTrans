@@ -1,0 +1,19 @@
+/* MessTrans.h - part of RiksLib        */
+/* © R Griffin 1997                     */
+
+#ifndef __messtrans_h
+#define __messtrans_h
+
+#ifndef __toolbox_h
+typedef struct
+{
+  int           data [4];
+} MessagesFD;
+#endif
+
+extern _kernel_oserror *messagetrans_lookup(MessagesFD *, char *token, char *buff, int buff_size);
+extern _kernel_oserror *messagetrans_open_file(MessagesFD *, char *file, void *buffer);
+extern _kernel_oserror *messagetrans_close_file(MessagesFD *);
+extern _kernel_oserror *messagetrans_file_info(char *file, int *mem, int *size);
+
+#endif	// __messtrans_h

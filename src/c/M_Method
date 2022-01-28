@@ -1,0 +1,588 @@
+/* TreeView:M_SetState.c	*/
+/* Rik Griffin Oct 2003		*/
+
+#include "Main.h"
+#include "Tree.h"
+#include "TreeFind.h"
+#include "Redraw.h"
+
+#include "menu.h"
+
+
+#define DEBUGLEVEL	1
+
+
+#if Debug_On
+
+static char *debug_method_code(int m, int flags) {
+  static char txt[64];
+
+  switch (m) {
+    case TreeView_SetState : return "TreeView_SetState";
+    case TreeView_GetState : return "TreeView_GetState";
+    case TreeView_AddNode : {
+      sprintf(txt, "TreeView_AddNode [%s]", (flags & 1) ? "child" : "sibling");
+      return txt;
+    }
+    case TreeView_GetNodeID : return "TreeView_GetNodeID";
+    case TreeView_SetNodeText : return "TreeView_SetNodeText";
+    case TreeView_SetNodeSprite : return "TreeView_SetNodeSprite";
+    case TreeView_SetNodePrivateWord : return "TreeView_SetNodePrivateWord";
+    case TreeView_GetNodeText : return "TreeView_GetNodeText";
+    case TreeView_GetNodeSprite : return "TreeView_GetNodeSprite";
+    case TreeView_GetNodePrivateWord : return "TreeView_GetNodePrivateWord";
+    case TreeView_MoveTo : return "TreeView_MoveTo";
+    case TreeView_MoveNext : return "TreeView_MoveNext";
+    case TreeView_MovePrevious : return "TreeView_MovePrevious";
+    case TreeView_MoveChild : return "TreeView_MoveChild";
+    case TreeView_MoveParent : return "TreeView_MoveParent";
+    case TreeView_DeleteNode : return "TreeView_DeleteNode";
+    case TreeView_DeleteAll : return "TreeView_DeleteAll";
+    case TreeView_UpdateDisplay : return "TreeView_UpdateDisplay";
+    case TreeView_MoveFirstSelected : return "TreeView_MoveFirstSelected";
+    case TreeView_MoveNextSelected : return "TreeView_MoveNextSelected";
+    case TreeView_SetMenu : return "TreeView_SetMenu";
+    case TreeView_ExpandNode : return "TreeView_ExpandNode";
+    case TreeView_SelectNode : return "TreeView_SelectNode";
+    case TreeView_MakeVisible : return "TreeView_MakeVisible";
+    case TreeView_FindNode : return "TreeView_FindNode";
+    case TreeView_GetNodeState : return "TreeView_GetNodeState";
+    case TreeView_GetWindowID : return "TreeView_GetWindowID";
+
+    default : return "unknown";
+  }
+}
+#endif
+
+
+static _kernel_oserror *method_add_sibling(PrivateTreeView *me, char *text) {
+  _kernel_oserror  *e;
+
+  DEBUG(DEBUGLEVEL, ("_method_add_sibling: %s\n", text));
+
+  if (tree_node_add(me) == NULL) {
+    DEBUG(0, ("Failed to add sibling node\n"));
+    return (_kernel_oserror *)"   @Failed to create node";
+  }
+
+  if ((e = tree_node_set_text(me->current_node, text)) != NULL) {
+    DEBUG(0, ("Failed to set text: %s\n", e->errmess));
+  }
+
+  DEBUG(DEBUGLEVEL, ("Added sibling node %p (%s) (previous %p (%s))\n",
+    (void *)me->current_node, debug_node_text(me->current_node),
+    (void *)me->current_node->prev, debug_node_text(me->current_node->prev)));
+
+  /* update the display if the auto flag is set		*/
+  if (e == NULL && (me->flags & TreeView_AutoUpdate)) {
+    (void) _make_icons(me, 1);
+  }
+  return e;
+}
+
+
+static _kernel_oserror *method_add_child(PrivateTreeView *me, char *text) {
+  _kernel_oserror *e;
+
+  if (tree_node_add_child(me) == NULL) {
+    DEBUG(0, ("Failed to add child node\n"));
+    return (_kernel_oserror *)"   @Failed to create node";
+  }
+
+  if ((e = tree_node_set_text(me->current_node, text)) != NULL) {
+    DEBUG(0, ("Failed to set text: %s\n", e->errmess));
+  }
+
+  DEBUG(DEBUGLEVEL, ("Added child node %p (%s) (parent %p (%s))\n",
+    (void *)me->current_node, debug_node_text(me->current_node),
+    (void *)me->current_node->parent, debug_node_text(me->current_node->parent)));
+
+  /* update the display if the auto flag is set		*/
+  if (e == NULL && (me->flags & TreeView_AutoUpdate)) {
+    (void) _make_icons(me, 1);
+  }
+
+  return e;
+}
+
+
+static _kernel_oserror *method_delete_node(PrivateTreeView *me) {
+  _kernel_oserror *e;
+  TreeNode *next = NULL, *old;
+
+  if (me->current_node == NULL) return (_kernel_oserror *)"   @Current node invalid";
+
+  /* find the new current node	*/
+  if (me->current_node == me->root_node) next = me->root_node;
+  else if (me->current_node->prev != NULL) next = me->current_node->prev;
+  else if (me->current_node->next != NULL) next = me->current_node->next;
+  else if (me->current_node->parent != NULL) next = me->current_node->parent;
+
+  /* is the new current node the one being deleted?	*/
+  if (next == me->current_node || next == NULL) next = me->root_node;
+
+  DEBUG(DEBUGLEVEL, ("Delete node: %p (%s) new current node: %p (%s)\n",
+    (void *)me->current_node, debug_node_text(me->current_node), (void *)next, debug_node_text(next)));
+
+  old = me->current_node;
+  ER(tree_set_current_node(me, next), e);
+  ER(tree_delete_node(me, old), e);
+
+  /* update the display if the auto flag is set		*/
+  if (me->flags & TreeView_AutoUpdate) {
+    (void) _make_icons(me, 1);
+  }
+
+  return NULL;
+}
+
+
+static _kernel_oserror *method_delete_all(PrivateTreeView *me) {
+  _kernel_oserror *e;
+
+  if (me->root_node == NULL) return NULL;	// nothing to delete
+
+  ER(tree_set_current_node(me, me->root_node), e);
+
+  ER(tree_delete_node(me, me->root_node), e);
+
+  return NULL;
+}
+
+
+static _kernel_oserror *method_expand(PrivateTreeView *me, TreeNode *node, int expand, int recurse) {
+  _kernel_oserror *e;
+
+  DEBUG(DEBUGLEVEL, ("method_expand: node: %p %s\n", (void *)node, debug_node_text(node)));
+
+  ER(tree_expand_node(me, node, expand, 0), e);
+  if (recurse && node->child != NULL) {
+    TreeNode *n;
+
+    n = node->child;
+
+    do {
+      if (n->child != NULL) {
+        ER(method_expand(me, n, expand, recurse), e);
+      }
+    } while ((n = n->next) != NULL);
+  }
+
+  return NULL;
+}
+
+
+/*
+ * On entry, x and y are screen OS coordinates.
+ * They are updated to be relative to the specified TreeView's work area
+*/
+_kernel_oserror *convert_screen_to_work(PrivateTreeView *me, int *x, int *y) {
+  _kernel_oserror *e;
+  WimpGetWindowStateBlock state;
+
+  state.window_handle = me->wimp_object;
+  ER(wimp_get_window_state(&state), e);
+
+  *x -= state.visible_area.xmin - state.xscroll;
+  *y -= state.visible_area.ymax - state.yscroll;
+
+  return NULL;
+}
+
+
+/*
+ * On entry, box is in screen OS coordinates.
+ * It is updated to be relative to the specified TreeView's work area
+*/
+_kernel_oserror *convert_bbox_screen_to_work(PrivateTreeView *me, BBox *box) {
+  _kernel_oserror *e;
+  WimpGetWindowStateBlock state;
+
+  state.window_handle = me->wimp_object;
+  ER(wimp_get_window_state(&state), e);
+
+  box->xmin -= state.visible_area.xmin - state.xscroll;
+  box->xmax -= state.visible_area.xmin - state.xscroll;
+
+  box->ymin -= state.visible_area.ymax - state.yscroll;
+  box->ymax -= state.visible_area.ymax - state.yscroll;
+
+  return NULL;
+}
+
+
+/*
+ * Takes absolute screen OS coordinates and finds the node, if any, at that
+ * position in the specified TreeView.
+*/
+static _kernel_oserror *method_find(PrivateTreeView *me, unsigned int flags, int x, int y, int *id) {
+  _kernel_oserror *e;
+  TreeNode *node;
+
+  IGNORE(flags);
+
+  /* find coordinates inside our window		*/
+  ER(convert_screen_to_work(me, &x, &y), e);
+
+  node = tree_find_node_at_coords(me, x, y, NULL);
+
+  if (id != NULL) *id = (int) node;
+
+  return NULL;
+}
+
+
+static _kernel_oserror *method_make_visible(PrivateTreeView *me, unsigned int flags,
+TreeNode *node) {
+  _kernel_oserror *e;
+  WimpGetWindowStateBlock state;
+  WimpOpenWindowBlock *o = (WimpOpenWindowBlock *)&state;
+  int y, yex;
+
+  if (node == NULL) return NULL;
+
+  DEBUG(DEBUGLEVEL, ("make visible node %p (%s)\n", (void *)node, debug_node_text(node)));
+
+  if (node->icon.flags != 0) {
+    y = node->icon.bbox.ymax;
+  } else if (node->text_icon.flags != 0) {
+    y = node->text_icon.bbox.ymax;
+  } else {
+    return method_make_visible(me, flags, node->parent);
+  }
+
+  state.window_handle = me->wimp_object;
+  ER(wimp_get_window_state(&state), e);
+
+  /* Scroll so this node is approx 1/4 of the way down the visible area	*/
+  yex = state.visible_area.ymax - state.visible_area.ymin;
+  state.yscroll = y + yex / 4;
+  if (state.yscroll > 0) state.yscroll = 0;
+
+  DEBUG(DEBUGLEVEL, ("  icon pos %d  extent %d  scroll %d\n", y, yex, state.yscroll));
+
+  ER(wimp_open_window(o), e);
+
+  send_scroll_event(me, o);
+
+  return NULL;
+}
+
+
+static _kernel_oserror *method_get_node_state(PrivateTreeView *me, unsigned int *flags) {
+  unsigned int state = 0;
+  TreeNode *n;
+  SelectionNode *s;
+
+  if ((n = me->current_node) == NULL) {
+    return (_kernel_oserror *)"   @Current node invalid";
+  }
+
+  if (n->next != NULL) state |= TreeView_Node_HasSiblingNext;
+  if (n->prev != NULL) state |= TreeView_Node_HasSiblingPrev;
+  if (n->child != NULL) state |= TreeView_Node_HasChild;
+  if (n->parent == me->root_node) state |= TreeView_Node_ParentIsRoot;
+
+  if (n->sprite[0] != '\0') state |= TreeView_Node_HasSprite;
+  if (n->sprite_ex[0] != '\0') state |= TreeView_Node_HasExpandedSprite;
+  if (n->text != NULL) state |= TreeView_Node_HasText;
+
+  if (n->child != NULL && n->expand_child) state |= TreeView_Node_IsExpanded;
+
+  /* look for this node in the selection list	*/
+  s = &me->selection_base;
+  while (s != NULL) {
+    if (s->node == n) {
+      state |= TreeView_Node_IsSelected;
+      break;
+    }
+    s = s->next;
+  }
+
+  *flags = state;
+
+  return NULL;
+}
+
+
+static _kernel_oserror *move_next(PrivateTreeView *me, int sorted) {
+  TreeNode *next;
+
+  if (me->current_node == NULL) {
+    return (_kernel_oserror *)"   @Current node invalid";
+
+  } else if (sorted) {
+    next = me->current_node->sorted.next;
+
+  } else {
+    next = me->current_node->next;
+  }
+
+  if (next == NULL) {
+    return (_kernel_oserror *)"   @Next node invalid";
+  }
+
+  return tree_set_current_node(me, next);
+}
+
+
+static _kernel_oserror *move_prev(PrivateTreeView *me, int sorted) {
+  TreeNode *next;
+
+  if (me->current_node == NULL) {
+    return (_kernel_oserror *)"   @Current node invalid";
+
+  } else if (sorted) {
+    next = me->current_node->sorted.prev;
+
+  } else {
+    next = me->current_node->prev;
+  }
+
+  if (next == NULL) {
+    return (_kernel_oserror *)"   @Previous node invalid";
+  }
+
+  return tree_set_current_node(me, next);
+}
+
+
+static _kernel_oserror *move_child(PrivateTreeView *me, int sorted) {
+  TreeNode *next;
+
+  if (me->current_node == NULL) {
+    return (_kernel_oserror *)"   @Current node invalid";
+
+  } else if (sorted) {
+    next = me->current_node->sorted.child;
+
+  } else {
+    next = me->current_node->child;
+  }
+
+  if (next == NULL) {
+    return (_kernel_oserror *)"   @Child node invalid";
+  }
+
+  return tree_set_current_node(me, next);
+}
+
+
+static _kernel_oserror *move_parent(PrivateTreeView *me) {
+  TreeNode *next;
+
+  if (me->current_node == NULL) {
+    return (_kernel_oserror *)"   @Current node invalid";
+
+  } else {
+    next = me->current_node->parent;
+  }
+
+  if (next == NULL) {
+    return (_kernel_oserror *)"   @Parent node invalid (this is really bad!)";
+  }
+
+  return tree_set_current_node(me, next);
+}
+
+
+_kernel_oserror *gadget_method(PrivateTreeView *me, _kernel_swi_regs *r) {
+  _kernel_oserror *e = NULL;
+
+  DEBUG(DEBUGLEVEL, ("Method code %x %s\n", r->r[2], debug_method_code(r->r[2], r->r[0])));
+
+  switch (r->r[2]) {
+    case TreeView_SetState :
+      e = method_set_gadget_state(me, r->r[4]);
+      _show(me);
+      break;
+
+    case TreeView_GetState :
+      r->r[0] = me->flags;
+      break;
+
+    case TreeView_SetMenu : {
+      ObjectClass c;
+      if (r->r[4] != 0) {
+        /* validate the menu ID in r4	*/
+        if ((e = toolbox_get_object_class(0, r->r[4], &c)) != NULL) {
+          return e;
+        }
+        if (c != Menu_ObjectClass) {
+          return (_kernel_oserror *)"   @Object is not a menu";
+        }
+      }
+      me->menu = r->r[4];
+    }
+    break;
+
+    case TreeView_AddNode :
+      DEBUG(DEBUGLEVEL, ("TreeView_AddNode: flags: %d\n", r->r[0]));
+      DEBUG(DEBUGLEVEL, ("current: %p\n", (void *)me->current_node));
+      if (me->current_node != NULL) {
+        DEBUG(DEBUGLEVEL, ("child: %p\n", (void *)me->current_node->child));
+      }
+
+      if (r->r[0] & TreeView_AddNode_AsChild) {
+        e = method_add_child(me, (char *)r->r[4]);
+      } else {
+        e = method_add_sibling(me, (char *)r->r[4]);
+      }
+
+      /* return handle of newly created node	*/
+      if (e == NULL) r->r[0] = (int) me->current_node;
+
+      break;
+
+    case TreeView_GetNodeID :
+      r->r[0] = (int) me->current_node;
+      break;
+
+    case TreeView_GetWindowID :
+      r->r[0] = (int) me->object_id;
+      r->r[1] = (int) me->wimp_object;
+      break;
+
+    case TreeView_SetNodeText :
+      e = tree_node_set_text(me->current_node, (char *)r->r[4]);
+
+      /* update the display if the auto flag is set		*/
+      if (me->flags & TreeView_AutoUpdate) {
+        (void) _make_icons(me, 1);
+      }
+      break;
+
+    case TreeView_SetNodeSprite :
+      e = tree_node_set_sprite(me->current_node, (SpriteArea *)r->r[4], (char *)r->r[5],
+        (char *)r->r[6]);
+
+      /* update the display if the auto flag is set		*/
+      if (me->flags & TreeView_AutoUpdate) {
+        (void) _make_icons(me, 1);
+      }
+      break;
+
+    case TreeView_GetNodeText :
+      if (r->r[4] == 0) {
+        /* return buffer size required	*/
+        e = tree_node_get_text_length(me->current_node, &r->r[5]);
+      } else {
+        /* fill the supplied buffer	*/
+        e = tree_node_get_text(me->current_node, (char *)r->r[4], r->r[5], &r->r[5]);
+      }
+      break;
+
+    case TreeView_GetNodeSprite :
+      if (r->r[4] == 0) {
+        /* return buffer size required	*/
+        e = tree_node_get_sprite_length(me->current_node, r->r[0], &r->r[5]);
+      } else {
+        e = tree_node_get_sprite(me->current_node, r->r[0], (char *)r->r[4], r->r[5],
+          &r->r[5]);
+      }
+      break;
+
+    case TreeView_GetNodeState :
+      e = method_get_node_state(me, (unsigned int *)&r->r[0]);
+      break;
+
+    case TreeView_SetNodePrivateWord :
+      if (me->current_node != NULL) {
+        me->current_node->private_word = (void *)r->r[4];
+      } else {
+        e = (_kernel_oserror *)"   @Current node invalid";
+      }
+      break;
+
+    case TreeView_GetNodePrivateWord :
+      if (me->current_node != NULL) {
+        r->r[0] = (int) me->current_node->private_word;
+      } else {
+        e = (_kernel_oserror *)"   @Current node invalid";
+      }
+      break;
+
+    case TreeView_MoveTo :
+      e = tree_set_current_node(me, (TreeNode *)r->r[4]);
+      break;
+
+    case TreeView_MoveNext :
+      e = move_next(me, r->r[0] & TreeView_Move_Sorted);
+      if (e == NULL) r->r[0] = (int) me->current_node;
+      break;
+
+    case TreeView_MovePrevious :
+      e = move_prev(me, r->r[0] & TreeView_Move_Sorted);
+      if (e == NULL) r->r[0] = (int) me->current_node;
+      break;
+
+    case TreeView_MoveChild :
+      e = move_child(me, r->r[0] & TreeView_Move_Sorted);
+      if (e == NULL) r->r[0] = (int) me->current_node;
+      break;
+
+    case TreeView_MoveParent :
+      e = move_parent(me);
+      if (e == NULL) r->r[0] = (int) me->current_node;
+      break;
+
+    case TreeView_DeleteNode :
+      if ((e = method_delete_node(me)) != NULL) {
+        r->r[0] = (int) me->current_node;
+      }
+      break;
+
+    case TreeView_DeleteAll :
+      e = method_delete_all(me);
+      break;
+
+    case TreeView_UpdateDisplay :
+      e = _make_icons(me, 1);
+      break;
+
+    case TreeView_MoveFirstSelected :
+      e = tree_move_first_selected(me);
+      if (e == NULL) r->r[0] = (int) me->current_node;
+      break;
+
+    case TreeView_MoveNextSelected :
+      e = tree_move_next_selected(me);
+      if (e == NULL) r->r[0] = (int) me->current_node;
+      break;
+
+    case TreeView_ExpandNode :
+      e = method_expand(me, me->current_node,
+        (r->r[0] & TreeView_ExpandNode_Expand) != 0,
+        (r->r[0] & TreeView_ExpandNode_Recurse) != 0);
+
+      if (e == NULL /*&& (me->flags & TreeView_AutoUpdate) != 0*/) {
+        e = _make_icons(me, 1);
+      }
+      break;
+
+    case TreeView_SelectNode : {
+      int recurse = (me->flags & TreeView_SelectChildren);
+      int select = (r->r[0] & TreeView_SelectNode_Select);
+
+      if (r->r[0] & TreeView_SelectNode_Unique) {
+        _delete_all_selection(me);
+      }
+
+      _select_node(me, me->current_node, select, recurse);
+
+      if (e == NULL) {
+        _update_selected_nodes(me);
+      }
+    } break;
+
+    case TreeView_MakeVisible :
+      e = method_make_visible(me, r->r[0], me->current_node);
+      break;
+
+    case TreeView_FindNode :
+      e = method_find(me, r->r[0], r->r[4], r->r[5], &r->r[0]);
+      break;
+  }
+
+  return e;
+}

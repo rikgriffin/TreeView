@@ -1,0 +1,12 @@
+/* Harness.Consts.h		*/
+/* © Rik Griffin Mar 2000	*/
+
+#define KEY_SHIFT       0
+#define KEY_CTRL        1
+#define KEY_ALT         2
+#define KEY_LEFT_SHIFT  3
+#define KEY_LEFT_CTRL   4
+#define KEY_LEFT_ALT    5
+#define KEY_RIGHT_SHIFT 6
+#define KEY_RIGHT_CTRL  7
+#define KEY_RIGHT_ALT   8

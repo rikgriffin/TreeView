@@ -1,0 +1,159 @@
+/* TreeView:M_Plot.c		*/
+/* Rik Griffin Oct 2003		*/
+
+#include "Main.h"
+#include "Redraw.h"
+#include "Tree.h"
+
+
+#define DEBUGLEVEL	1
+
+
+static PrivateTreeView RedrawTree;
+
+
+/* create a "dummy" tree used for redraws inside ResEd	*/
+_kernel_oserror *_plot_init(void) {
+  _kernel_oserror *e;
+  PrivateTreeView *me = &RedrawTree;
+
+  me->foreground_wimp = 7;
+  me->background_wimp = 1;
+  me->linecolour_wimp = 3;
+  me->vertical_spacing = 8;
+  me->horizontal_spacing = 256;
+
+  me->parent_id = 0;
+  me->component_id = 0;
+  me->menu = 0;
+  me->x_extent = me->y_extent = 0;
+  me->wimp_parent = 0;
+  me->scrollbars = 0;
+  me->rows = me->cols = 0;
+  me->flags = 0;
+
+  /* set up the root node	*/
+  (void) tree_node_add_root(me);
+  me->selection_base.node = NULL;
+  me->selection_base.next = NULL;
+
+  /* Add some nodes to the tree ...	*/
+  tree_node_add_child(me);
+  ER(tree_node_set_text(me->current_node, "Node"), e);
+  ER(tree_node_set_sprite(me->current_node, (SpriteArea *)1, "small_dir", "small_diro"), e);
+
+  tree_node_add_child(me);
+  ER(tree_node_set_text(me->current_node, "Child"), e);
+  ER(tree_node_set_sprite(me->current_node, (SpriteArea *)1, "small_fff", NULL), e);
+
+  tree_node_add(me);
+  ER(tree_node_set_text(me->current_node, "Sibling"), e);
+  ER(tree_node_set_sprite(me->current_node, (SpriteArea *)1, "small_ffd", NULL), e);
+
+
+  return NULL;
+}
+
+
+/* Convert window work area coordinates to absolute screen coordinates	*/
+static void work_to_screen(BBox *wa, WimpGetWindowStateBlock *state) {
+    wa->xmin += state->visible_area.xmin - state->xscroll;
+    wa->xmax += state->visible_area.xmin - state->xscroll;
+
+    wa->ymin += state->visible_area.ymax - state->yscroll;
+    wa->ymax += state->visible_area.ymax - state->yscroll;
+}
+
+
+#if 0
+/* Convert absolute screen coordinates to window work are coodinates	*/
+static void screen_to_work(BBox *wa, WimpGetWindowStateBlock *state) {
+    wa->xmin -= state->visible_area.xmin - state->xscroll;
+    wa->xmax -= state->visible_area.xmin - state->xscroll;
+
+    wa->ymin -= state->visible_area.ymax - state->yscroll;
+    wa->ymax -= state->visible_area.ymax - state->yscroll;
+}
+#endif
+
+
+_kernel_oserror *gadget_plot(TreeView *templ) {
+  _kernel_oserror *e;
+  WimpGetWindowStateBlock state;
+  WimpRedrawWindowBlock redraw;
+  PrivateTreeView *me = &RedrawTree;
+  int xextent, yextent;
+  BBox border;
+
+  if (RedrawingWindow == 0) return NULL;
+
+  state.window_handle = RedrawingWindow;
+  ER(wimp_get_window_state(&state), e);
+
+  /* draw the background and a border		*/
+  border = templ->hdr.box;
+  border.xmax -= 2;
+  border.ymax -= 2;
+  work_to_screen(&border, &state);
+
+  ER(_swix(Wimp_SetColour, _IN(0), (1<<7) | me->background_wimp), e);
+  ER(_swix(Wimp_SetColour, _IN(0), me->foreground_wimp), e);
+
+  ER(_swix(OS_Plot, _INR(0,2), PLOT_MOVE, border.xmin, border.ymin), e);
+  ER(_swix(OS_Plot, _INR(0,2), PLOT_RECTANGLE_FILL | PLOT_BACK, border.xmax, border.ymax), e);
+
+  ER(_swix(OS_Plot, _INR(0,2), PLOT_DRAW, border.xmin, border.ymax), e);
+  ER(_swix(OS_Plot, _INR(0,2), PLOT_DRAW, border.xmin, border.ymin), e);
+  ER(_swix(OS_Plot, _INR(0,2), PLOT_DRAW, border.xmax, border.ymin), e);
+  ER(_swix(OS_Plot, _INR(0,2), PLOT_DRAW, border.xmax, border.ymax), e);
+
+  me->box = templ->hdr.box;
+  me->flags = templ->hdr.flags;
+
+  /* Prevent other treeviews getting events for this one	*/
+  me->flags &= ~TreeView_NotifySelection;
+  me->flags &= ~TreeView_NotifyExpansion;
+  me->flags &= ~TreeView_NotifyRename;
+  me->flags &= ~TreeView_NotifyDragEnd;
+  me->flags &= ~TreeView_AllEvents;
+
+  me->foreground_wimp = templ->colours.foreground_wimp;
+  me->background_wimp = templ->colours.background_wimp;
+  me->linecolour_wimp = templ->colours.linecolour_wimp;
+  me->vertical_spacing = templ->vertical_spacing;
+  me->horizontal_spacing = templ->horizontal_spacing;
+
+  /* calculate the layout - copied from _make_icons()	*/
+
+  tree_expand_node(me, me->root_node->child, (me->flags & TreeView_ExpandByDefault) != 0, 0);
+
+  if (me->flags & TreeView_FlatMode) {
+    xextent = me->box.xmax - me->box.xmin;
+    make_icons_flat(me, me->root_node->child->child, me->box.xmin + 2, me->box.ymax - 2, xextent, &yextent);
+  } else {
+    make_icons_tree(me, me->root_node, me->box.xmin + 2, me->box.ymax - 2, &xextent, &yextent, 1);
+  }
+
+  me->x_extent = xextent;
+  me->y_extent = yextent;
+
+  ER(_update_extent(me), e);
+
+  /* refresh the selection flags in the icons	*/
+  _update_selected_nodes(me);
+
+  /* fudge a redraw block	*/
+  redraw.window_handle = RedrawingWindow;
+  redraw.visible_area = state.visible_area;
+
+  redraw.xscroll = redraw.yscroll = 0;
+  redraw.redraw_area = redraw.visible_area;	// not used;
+
+  if (me->flags & TreeView_FlatMode) {
+    plot_node_flat(&redraw, me, me->root_node->child->child);
+  } else {
+    plot_node_tree(&redraw, me, me->root_node);
+  }
+
+  return NULL;
+}

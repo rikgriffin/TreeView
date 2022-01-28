@@ -1,0 +1,4 @@
+/* Harness.Handlers.h		*/
+/* © Rik Griffin Mar 2000	*/
+
+extern _kernel_oserror *handlers_register_events(void);

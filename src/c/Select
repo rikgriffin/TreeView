@@ -1,0 +1,212 @@
+/* TreeView:Select.c		*/
+/* Rik Griffin Nov 2003		*/
+
+#include "Main.h"
+
+
+#define DEBUGLEVEL	2
+
+
+SelectionNode *find_selection_node(PrivateTreeView *me, TreeNode *node) {
+  SelectionNode *s;
+
+  s = me->selection_base.next;
+
+  while (s != NULL) {
+    if (s->node == node) return s;
+    s = s->next;
+  }
+
+  return NULL;
+}
+
+
+/* recurse is 0 if we are not recursing down the tree, otherwise	*/
+/* it starts at 1 for the first node and increments with each recursion	*/
+static int add_selection_node(PrivateTreeView *me, TreeNode *node, int recurse) {
+  SelectionNode *s;
+  int depth = recurse - 1;
+
+  if (node == NULL) {
+    DEBUG(0, ("Attempt to add NULL node to selection\n"));
+    return 0;
+  }
+
+  if ((s = _mem_allocate(sizeof(SelectionNode))) == NULL) return 0;
+
+  s->node = node;
+  if (s->node != NULL) {
+    if (s->node->icon.flags != 0) s->node->icon.flags |= WimpIcon_Selected;
+    if (s->node->text_icon.flags != 0) s->node->text_icon.flags |= WimpIcon_Selected;
+    _force_redraw_node(me, s->node);
+  }
+
+  /* add this new node at the top of the list as it's easiest	*/
+  s->next = me->selection_base.next;
+  me->selection_base.next = s;
+
+  DEBUG(DEBUGLEVEL, ("added selection node %p (%p %s) (recurse level %d)\n", (void *)s, (void *)s->node, debug_node_text(s->node), recurse));
+
+  if (recurse != 0) {
+    if (recurse > 1) {
+      if (node->next != NULL) depth = add_selection_node(me, node->next, recurse + 1);
+    }
+    if (node->child != NULL) depth = add_selection_node(me, node->child, recurse + 1);
+  }
+
+  DEBUG(DEBUGLEVEL, ("depth: %d\n", depth));
+  return depth < 0 ? 0 : depth;
+}
+
+
+int remove_selection_node(PrivateTreeView *me, TreeNode *node, int recurse) {
+  SelectionNode *s, *prev, *next;
+  int depth = recurse - 1;
+
+  s = me->selection_base.next;
+  prev = &me->selection_base;
+
+  DEBUG(DEBUGLEVEL, ("remove selection node\n"));
+
+  while (s != NULL) {
+    DEBUG(DEBUGLEVEL, ("checking tree node %p (%s)\n", (void *)s->node, debug_node_text(s->node)));
+
+    next = s->next;
+
+    if (s->node == node) {
+      /* delete this one	*/
+      if (s->node != NULL) {
+        if (s->node->icon.flags != 0) s->node->icon.flags &= ~WimpIcon_Selected;
+        if (s->node->text_icon.flags != 0) s->node->text_icon.flags&=~WimpIcon_Selected;
+        _force_redraw_node(me, s->node);
+      }
+      DEBUG(DEBUGLEVEL, ("deleted selection node %p (%p %s) (recurse level %d)\n", (void *)s, (void *)s->node, debug_node_text(s->node), recurse));
+      prev->next = s->next;
+      _mem_free(s);
+
+    } else {
+      prev = s;
+    } // end if
+
+    s = next;
+  }
+
+  if (recurse != 0) {
+    if (recurse > 1) {
+      if (node->next != NULL) depth = remove_selection_node(me, node->next, recurse+1);
+    }
+    if (node->child != NULL) depth = remove_selection_node(me, node->child, recurse+1);
+  }
+
+  DEBUG(DEBUGLEVEL, ("depth: %d\n", depth));
+  return depth < 0 ? 0 : depth;
+}
+
+
+void _delete_all_selection(PrivateTreeView *me) {
+  SelectionNode *s, *next;
+
+  s = me->selection_base.next;
+  me->selection_base.next = NULL;
+
+  while (s != NULL) {
+    if (s->node != NULL) {
+      if (s->node->icon.flags != 0) s->node->icon.flags &= ~WimpIcon_Selected;
+      if (s->node->text_icon.flags != 0) s->node->text_icon.flags &= ~WimpIcon_Selected;
+      _force_redraw_node(me, s->node);
+    }
+
+    if ((me->flags & TreeView_NotifySelection) != 0) {
+      send_selection_event(me, s->node, 0, 0);
+    }
+
+    next = s->next;
+    DEBUG(DEBUGLEVEL, ("deleted selection node %p (%p %s)\n", (void *)s, (void *)s->node, debug_node_text(s->node)));
+    _mem_free(s);
+    s = next;
+  }
+}
+
+
+/* select flag is -1 to toggle state, 1 to select, 0 to clear	*/
+/* click is 1 if this is the result of a mouse click.		*/
+void _select_node(PrivateTreeView *me, TreeNode *node, int mode, int recurse) {
+  int multiple = 0, select = 0;
+  SelectionNode *s;
+
+  /* see if this node is already selected	*/
+  s = find_selection_node(me, node);
+  DEBUG(DEBUGLEVEL, ("Node %p (%s) already selected: %p\n", (void *)node, debug_node_text(node), (void *)s));
+
+  /* Clear existing selection if exclusive is set, but not if this	*/
+  /* was a mouse click on an already selected node (to allow the user	*/
+  /* to start a drag of the selection without altering it).		*/
+//  if (exclusive && !(click && s != NULL)) {
+//    _delete_all_selection(me);
+//    if (select_flag == SELECT_SELECT) {
+//      /* setting	*/
+//      multiple = add_selection_node(me, node, recurse);
+//      select = 1;
+//    }
+//
+//  } else {
+
+    if (s != NULL) {
+      /* node is already selected		*/
+      if (mode != SELECT_SELECT) {
+        /* clearing or toggling	*/
+        multiple = remove_selection_node(me, node, recurse);
+        select = -1;
+      }
+
+    } else {
+      /* node isn't selected		*/
+      if (mode != SELECT_CLEAR) {
+        /* setting or toggling		*/
+        multiple = add_selection_node(me, node, recurse);
+        select = 1;
+      }
+    }
+
+//  }  // end if (exclusive)
+
+  if ((me->flags & TreeView_NotifySelection) != 0 && select != 0) {
+    DEBUG(DEBUGLEVEL, ("Send selection event: s = %d  m = %d\n", select, multiple));
+    send_selection_event(me, node, multiple > 0 ? 1 : 0, select);
+  }
+
+}
+
+
+/* call this to correctly display nodes as selected after the icons	*/
+/* have been regenerated.						*/
+void _update_selected_nodes(PrivateTreeView *me) {
+  SelectionNode *s;
+
+  s = me->selection_base.next;
+
+  while (s != NULL) {
+    if (s->node != NULL) {
+      if (s->node->icon.flags != 0) s->node->icon.flags |= WimpIcon_Selected;
+      if (s->node->text_icon.flags != 0) s->node->text_icon.flags |= WimpIcon_Selected;
+    }
+    s = s->next;
+  }
+
+}
+
+
+/* returns how many nodes are selected in this treeview		*/
+int selection_node_count(PrivateTreeView *me) {
+  int c = 0;
+  SelectionNode *s;
+
+  s = me->selection_base.next;
+
+  while (s != NULL && s->node != NULL) {
+    c++;
+    s = s->next;
+  }
+
+  return c;
+}

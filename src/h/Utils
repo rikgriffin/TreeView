@@ -1,0 +1,12 @@
+/*
+ * TreeView.Utils.h
+ *
+ * Misc functions lifted from RiksLib so that TreeView can be
+ * built without external dependencies
+*/
+
+
+extern int rikslib_strcmp_nc(const char *a, const char *b);
+extern char *rikslib_strncpy(char *b, const char *a, int len);
+extern _kernel_oserror *rikslib_find_wimp_sprite(char *name, SpriteArea **area, SpriteCtrlBlock **sprite);
+extern _kernel_oserror *rikslib_sprite_eig_factors(SpriteCtrlBlock *spr, int *x, int *y);

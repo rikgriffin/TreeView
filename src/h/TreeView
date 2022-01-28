@@ -1,0 +1,465 @@
+/* TreeView.h			*/
+/* © Rik Griffin Oct 2003	*/
+
+
+#ifndef __treeview_h
+#define __treeview_h
+
+#ifndef __kernel_h
+  #include "kernel.h"
+#endif
+
+#ifndef __toolbox_h
+  #include "toolbox.h"
+#endif
+
+#ifndef __window_h
+  #include "window.h"
+#endif
+
+
+/* This new template is the same size as the old one (4 words),	*/
+/* so ResEd will load both types. I've added code to ResEd to	*/
+/* convert the old style to the new when loaded.		*/
+typedef struct {
+  GadgetHeader	hdr;
+  struct {
+    unsigned int	foreground_wimp : 4;
+    unsigned int 	background_wimp : 4;
+    unsigned int 	linecolour_wimp : 4;
+    unsigned int	unused : 12;
+    unsigned int 	version : 8;
+  } colours;
+
+  unsigned int	vertical_spacing;
+  unsigned int	horizontal_spacing;
+  unsigned int	unused;
+} TreeView;
+
+
+/* TreeView gadget flags			*/
+/* Note all gadgets share the same 		*/
+/* interpretation of flag bits 30 and 31	*/
+/* 30 : gadget is at back			*/
+/* 31 : gadget is faded				*/
+
+#define TreeView_AllowVScroll		(1u<<0)
+#define TreeView_AllowHScroll		(1u<<1)
+#define TreeView_AutoUpdate		(1u<<2)
+#define TreeView_ShowCurrentNode	(1u<<3)
+#define TreeView_PlotLines		(1u<<4)
+
+#define TreeView_AllowSelection		(1u<<5)
+#define TreeView_NotifySelection	(1u<<6)
+#define TreeView_SelectChildren		(1u<<7)
+
+#define TreeView_AllowExpand		(1u<<8)
+#define TreeView_NotifyExpansion	(1u<<9)
+#define TreeView_ExpandByDefault	(1u<<10)
+
+#define TreeView_AllowRename		(1u<<11)
+#define TreeView_NotifyRename		(1u<<12)
+
+#define TreeView_AllowDrags		(1u<<13)
+#define TreeView_NotifyDragEnd		(1u<<14)
+
+#define TreeView_AllEvents		(1u<<15)
+#define TreeView_DoubleClickExpands	(1u<<16)
+
+#define TreeView_FlatMode		(1u<<17)
+#define TreeView_TextBelowSprite	(1u<<18)
+
+#define TreeView_SortDisplay		(1u<<19)
+#define TreeView_SortReversed		(1u<<20)
+#define TreeView_SortBySprite		(1u<<21)
+
+//#define TreeView_NotifyDoubleClick	(1u<<22)
+
+
+#define TreeViewValidFlags	(0\
+	| TreeView_AllowVScroll  \
+	| TreeView_AllowHScroll \
+	| TreeView_AutoUpdate \
+	| TreeView_ShowCurrentNode \
+	| TreeView_PlotLines \
+	| TreeView_AllowSelection \
+	| TreeView_NotifySelection \
+	| TreeView_SelectChildren \
+	| TreeView_AllowExpand \
+	| TreeView_NotifyExpansion \
+	| TreeView_ExpandByDefault \
+	| TreeView_AllowRename \
+	| TreeView_NotifyRename \
+	| TreeView_AllowDrags \
+	| TreeView_NotifyDragEnd \
+	| TreeView_AllEvents \
+	| TreeView_DoubleClickExpands \
+	| TreeView_FlatMode \
+	| TreeView_TextBelowSprite \
+	| TreeView_SortDisplay \
+	| TreeView_SortReversed \
+	| TreeView_SortBySprite \
+	| Gadget_AtBack  \
+	| Gadget_Faded  \
+)
+
+
+/* TreeView methods	*/
+
+#define TreeView_SWIBase	0x00140280
+#define TreeView_MethodBase	((TreeView_SWIBase & 0x000ffff0) >> 4)
+#define TreeView_EventBase	TreeView_SWIBase
+
+#define TreeView_Type		(((sizeof(TreeView)) << 16) | TreeView_MethodBase)
+#define TreeView_ObjectClass	TreeView_SWIBase
+
+
+/* Methods are numbered from MethodBase	*/
+enum {
+  TreeView_SetState = TreeView_MethodBase,	/* 0x4028 = 16424	*/
+  TreeView_GetState, 				/* 0x4029 = 16425	*/
+  TreeView_AddNode,				/* 0x402a = 16426	*/
+  TreeView_GetNodeID,				/* 0x402b = 16427	*/
+  TreeView_SetNodeText,				/* 0x402c = 16428	*/
+  TreeView_SetNodeSprite,			/* 0x402d = 16429	*/
+  TreeView_SetNodePrivateWord,			/* 0x402e = 16430	*/
+  TreeView_GetNodeText,				/* 0x402f = 16431	*/
+  TreeView_GetNodeSprite,			/* 0x4030 = 16432	*/
+  TreeView_GetNodePrivateWord,			/* 0x4031 = 16433	*/
+  TreeView_MoveTo,				/* 0x4032 = 16434	*/
+  TreeView_MoveNext,				/* 0x4033 = 16435	*/
+  TreeView_MovePrevious,			/* 0x4034 = 16436	*/
+  TreeView_MoveChild,				/* 0x4035 = 16437	*/
+  TreeView_MoveParent,				/* 0x4036 = 16438	*/
+  TreeView_DeleteNode,				/* 0x4037 = 16439	*/
+  TreeView_DeleteAll,				/* 0x4038 = 16440	*/
+  TreeView_UpdateDisplay,			/* 0x4039 = 16441	*/
+  TreeView_MoveFirstSelected,			/* 0x403a = 16442	*/
+  TreeView_MoveNextSelected,			/* 0x403b = 16443	*/
+  TreeView_SetMenu,				/* 0x403c = 16444	*/
+  TreeView_ExpandNode,				/* 0x403d = 16445	*/
+  TreeView_SelectNode,				/* 0x403e = 16446	*/
+  TreeView_MakeVisible,				/* 0x403f = 16447	*/
+  TreeView_FindNode,				/* 0x4040 = 16448	*/
+  TreeView_GetNodeState,			/* 0x4041 = 16449	*/
+  TreeView_GetWindowID				/* 0x4042 = 16450	*/
+};
+
+#define TreeView_AddNode_AsChild	(1u<<0)
+/* This isn't supported yet and probably never will be!
+#define TreeView_AddNode_NoData		(1u<<1)
+*/
+
+/* You can use these constants for clearer code if you want to	*/
+#define TreeView_AddNode_AsSibling	(0)
+
+#define TreeView_ExpandNode_Expand	(1u<<0)
+#define TreeView_ExpandNode_Recurse	(1u<<1)
+
+#define TreeView_SelectNode_Select	(1u<<0)
+#define TreeView_SelectNode_Unique	(1u<<1)
+
+#define TreeView_Move_Unsorted		(0)
+#define TreeView_Move_Sorted		(1u<<0)
+
+
+/* TreeView events	*/
+#define TreeViewEvent_NodeSelected	(TreeView_EventBase + 0)	// 0x140280
+#define TreeViewEvent_NodeExpanded	(TreeView_EventBase + 1)	// 0x140281
+#define TreeViewEvent_NodeRenamed	(TreeView_EventBase + 2)	// 0x140282
+//#define TreeViewEvent_NodeClicked	(TreeView_EventBase + 3)	// 0x140283
+#define TreeViewEvent_NodeDragged	(TreeView_EventBase + 4)	// 0x140284
+#define TreeViewEvent_Scroll		(TreeView_EventBase + 5)	// 0x140285
+
+/* TreeView event data types	*/
+
+typedef struct {
+    ToolboxEventHeader	hdr;
+    int			node;
+} TreeViewNodeSelectedEvent;
+
+#define TreeView_NodeSelected_Selected	(1u<<0)
+#define TreeView_NodeSelected_Multiple	(1u<<1)
+
+
+typedef struct {
+    ToolboxEventHeader	hdr;
+    int			node;
+} TreeViewNodeExpandedEvent;
+
+#define TreeView_NodeExpanded_Expanded	(1u<<0)
+
+
+typedef struct {
+    ToolboxEventHeader	hdr;
+    WimpOpenWindowBlock	data;
+} TreeViewScrollEvent;
+
+
+typedef struct {
+    ToolboxEventHeader	hdr;
+    int			node;
+} TreeViewNodeRenamedEvent;
+
+
+typedef struct {
+    ToolboxEventHeader	hdr;
+    int			node;
+    int			destination_node;
+    int			mouse_buttons;
+    WimpGetPointerInfoBlock	destination;
+} TreeViewNodeDraggedEvent;
+
+#define TreeView_NodeDragged_OutsideGadget	(1u<<0)
+#define TreeView_NodeDragged_MultipleSelection	(1u<<1)
+
+
+/* Flags for GetNodeState method	*/
+#define TreeView_Node_HasSiblingNext		(1u<<0)
+#define TreeView_Node_HasSiblingPrev		(1u<<1)
+#define TreeView_Node_HasChild			(1u<<2)
+#define TreeView_Node_ParentIsRoot		(1u<<3)
+
+#define TreeView_Node_HasSprite			(1u<<4)
+#define TreeView_Node_HasExpandedSprite		(1u<<5)
+#define TreeView_Node_HasText			(1u<<6)
+
+#define TreeView_Node_IsExpanded		(1u<<7)
+#define TreeView_Node_IsSelected		(1u<<8)
+
+
+/* TreeView method veneers						*/
+/* By convention, all methods have the first three parameters as:	*/
+/* flags, window, component						*/
+
+extern _kernel_oserror *treeview_set_state (
+  unsigned int	flags,
+  ObjectId	window,
+  ComponentId	gadget,
+  unsigned int	state
+);
+
+
+extern _kernel_oserror *treeview_get_state (
+  unsigned int	flags,
+  ObjectId	window,
+  ComponentId	gadget,
+  unsigned int	*state
+);
+
+
+extern _kernel_oserror *treeview_set_menu (
+  unsigned int	flags,
+  ObjectId	window,
+  ComponentId	gadget,
+  ObjectId	menu
+);
+
+
+extern _kernel_oserror *treeview_add_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  char *text,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_get_node_id (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_set_node_text (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  char *text
+);
+
+
+extern _kernel_oserror *treeview_get_node_text (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  char *text,
+  int buff_size,
+  int *nbytes
+);
+
+
+extern _kernel_oserror *treeview_get_node_text (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  char *buffer,
+  int buff_size,
+  int *nbytes
+);
+
+
+extern _kernel_oserror *treeview_set_node_sprite (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  void *sprite_area,
+  char *sprite_name,
+  char *expanded_sprite_name
+);
+
+
+extern _kernel_oserror *treeview_get_node_sprite (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  char *buffer,
+  int buff_size,
+  int *nbytes
+);
+
+
+extern _kernel_oserror *treeview_set_node_private_word (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  void *private_word
+);
+
+
+extern _kernel_oserror *treeview_get_node_private_word (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  void **private_word
+);
+
+
+extern _kernel_oserror *treeview_move_to (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int id
+);
+
+
+extern _kernel_oserror *treeview_move_next (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_move_previous (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_move_child (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_move_parent (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_delete_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_delete_all (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+);
+
+
+extern _kernel_oserror *treeview_update_display (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+);
+
+
+extern _kernel_oserror *treeview_move_first_selected (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_move_next_selected (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_expand_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+);
+
+
+extern _kernel_oserror *treeview_select_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+);
+
+
+extern _kernel_oserror *treeview_make_visible (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+);
+
+
+extern _kernel_oserror *treeview_find_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int x,
+  int y,
+  int *id
+);
+
+
+extern _kernel_oserror *treeview_get_node_state (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  unsigned int *state
+);
+
+
+extern _kernel_oserror *treeview_get_window_id (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  ObjectId *id
+);
+
+
+#endif	// ifndef __treeview_h

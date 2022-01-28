@@ -1,0 +1,355 @@
+Brief help for using the TreeView gadget in your applications
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All methods, events, flags etc are documented in the StrongHelp manual
+supplied in the archive. A library of veneers for C programmers is
+included, link your program with "TreeView:TreeViewLib.o", the header
+file to use is "TreeView:TreeView.h".
+
+A library for use from Lua is included in TreeView:Lua
+
+Note - ResEd 0.52 has built in support for TreeView gadgets. To create a
+TreeView gadget in ResEd, just drag from the "Gadgets" window in the same
+way as you would for any other gadget type. ResEd is available from
+www.riscosopen.org
+
+
+The !Harness application is a simple test harness for the TreeView gadget,
+it allows you to play with the flags and see the effects. To quickly
+populate the TreeView in !Harness, just drag a directory into the window.
+
+The source to the !Harness application is provided.
+
+
+Basic concepts of the TreeView
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The tree is built from a number of nodes. Each node can have text and
+two different sprites associated with it. A node can have up to four
+neighbours - a parent, one or two siblings, and a child. These
+relationships decide how the tree is laid out.
+
+Every tree contains a single node when it is created, this is called the
+"root node". The root node cannot be deleted, nor is it ever displayed by
+the gadget, it's merely there as a starting point to attach other nodes.
+
+The tree also has a "current node" - this is an internal concept and not
+related in any way to nodes which may be selected by the user. The current
+node is initially the root node.
+
+
+New nodes are always added relative to the current node. New nodes can be
+added as siblings or children (decided by a flag word in the method).
+Strictly speaking, each node can only have one child, and two siblings,
+but if you add a child node to a node that already has a child, it is
+added as a sibling to the existing child.
+
+An additional restriction is that the root node may not have siblings, it
+may only have a child. This is handled automatically, if you try and add a
+sibling to the root node, it will be added as its child (or as a sibling of
+its child).
+
+This is easier to explain with an example. Say you want to make a tree
+that will be displayed like this:
+
+ A
+ |-B
+ |-C
+ |-D
+
+Remember, the root node always exists but is not displayed. Therefore node
+A will be the child of the root node. B C and D are all siblings of each
+other, and B is the child of A.
+
+First, node A would be added. When a new node is added, it becomes the
+current node, so building this tree is simple. After adding node A, add
+node B with the "child" flag set in the method call. B is now the
+current node.
+
+Next add node C, with the "sibling" flag set in the method call. C is
+now the current node, so finally add D, also as a sibling.
+
+When a node is created, a unique handle is returned to the client. You
+can use this handle to set the current node, using the TreeView_MoveTo
+method. Alternatively you can set the current node using the
+TreeView_MoveNext Previous, Child, Parent methods.
+
+Note that when selecting a new current node, an error is returned if you
+try and select a node that doesn't exist (eg doing TreeView_MoveNext
+when the current node is D in the example above). However also note that
+the root node's parent is itself. Therefore you can always get to the
+root of a tree by repeatedly calling TreeView_MoveParent until the
+current node doesn't change any more.
+
+
+Expanding nodes
+~~~~~~~~~~~~~~~
+
+If a node has a child, and the gadget has the TreeView_AllowExpand flag
+set, then an "expand icon" will be plotted next to the node. If the user
+clicks this icon, the node's children will be either hidden or shown. If
+the node has an "expanded sprite" (set using TreeView_SetNodeSprite)
+then a different sprite will be plotted when the node is expanded.
+
+
+Selecting nodes
+~~~~~~~~~~~~~~~
+
+If the gadget's TreeView_AllowSelection flag is set, the user can select
+nodes by clicking with the mouse. The client application can find out
+which nodes are selected using the TreeView_MoveFirstSelected and
+TreeView_MoveNextSelected methods. See the manual for more details.
+
+
+Current known bugs and limitations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Some features are not implemented yet, including:
+
+  Nodes with child data supplied after creation.
+  User editing of node text (renaming).
+
+If you find any other bugs, or have any feedback at all, please email me
+at:
+
+    rik.grf@gmail.com
+
+
+Version history
+~~~~~~~~~~~~~~~
+
+New in version 0.22 (08 Sep 2015)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+TreeView_GetWindowID now returns the TreeView window object's wimp handle in r1.
+
+
+New in version 0.22 (08 Sep 2015)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Really fixed recursive node expanding this time.
+Select click over a selected node no longer deselects other nodes (this is how the Filer behaves).
+
+
+New in version 0.21 (24 Aug 2015)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When adding a child node, the new node is added before any existing children.
+Fixed recursive node expanding to affect all children.
+
+
+New in version 0.20 (11 Aug 2015)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fixed redraw bug involving dragging a node with no sprite.
+Fixed redraw bug when a node had a sprite but no text, in 'text below sprite' mode.
+
+
+New in version 0.19 (2 Dec 2011)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You may now change the text of the root node.
+Fixed treeview vertical extent in flat mode so scrollbar appears correctly.
+Eliminated unnecessary sorting of nodes when redrawing.
+The vertical and horizontal spacing values in the template now have an effect.
+Added drag box to select nodes, and auto scroll when doing so.
+Support ScollRequest so mouse scroll wheels etc work.
+Fixed lines when tree is sorted.
+Added TreeView_GetWindowID method.
+Added TreeViewEvent_Scroll event.
+Added TreeView_Move_Sorted flag to TreeView_Move... methods.
+
+
+New in version 0.18 (06 May 2011)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Recompliled for Beagleboard compatibility.
+
+
+New in version 0.17 (19 Jun 2009)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fixed resizing of gadget and the handling of scrollbars when this occurs.
+Redraw of selected nodes is now flicker free.
+Gadget display in ResEd now looks like a TreeView.
+Added support for TreeView to ResEd.
+
+
+
+New in version 0.16 (29 Apr 2009)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Added TreeView_GetNodeState method.
+
+
+New in version 0.15 (17 Sep 2008)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Changed the data structures of TreeView events - there were two flags words
+for some reason and their usage had become confused. Now all flags are in
+the flags word in the standard event header (type: ToolboxEventHeader).
+
+The TreeViewEvent_NodeDragged event now includes which mouse button was
+used to start the drag.
+
+Added the TreeView_ExpandNode method.
+
+Added the TreeView_SelectNode method.
+
+Added the TreeView_FindNode method.
+
+Added the TreeView_MakeVisible method.
+
+Updated the manual.
+
+
+New in version 0.14 (28 Aug 2008)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Changed how the root node is handled. The root node is now created with the
+gadget and can never be deleted. It is never displayed.
+
+Introduced new flags:
+
+  TreeView_FlatMode - displays the second level of the tree only (ie the
+    children of the root node), in a filer-like display style.
+
+  TreeView_TextBelowSprite - plot text below sprite instead of alongside it.
+    Works nicely in flat mode, not so nicely in tree mode.
+
+  TreeView_SortDisplay - sorts each level of the tree according to the text
+    of the nodes.
+
+  TreeView_SortReversed - reverses the order of the sorting.
+
+  TreeView_SortBySprite - sorts on sprite name rather than node text.
+
+
+Supported the MoveGadget method, but it's not perfect yet.
+
+Fixed a bug to do with selections.
+
+The object ID supplied to TreeView_SetMenu is now validated to check it
+actually is a Menu object.
+
+
+New in version 0.13 (08 Jul 2008)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fixed bug - TreeView_DoubleClickExpands flag was not being used correctly.
+
+
+New in version 0.12 (15 Oct 2007)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fixed bug - the current node was not being set to NULL when
+TreeView_DeleteAll was used. Hence the next call to TreeView_AddNode could
+cause a data abort.
+
+
+New in version 0.11 (25 July 2007)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+TreeView_SetMenu - works like Window_SetMenu
+
+Menu button over a tree selects the node under the pointer, if there was no
+selection previously.
+
+Fixed bug in selecting multiple nodes.
+
+Used the "package" wimp sprite for drags of multiple nodes. There's a
+colourtrans bug if the wimp sprite is 4bpp though.
+
+Added a flag to the NodeDragged event to indicate that more than one node
+was dragged.
+
+
+New in version 0.10 (12 July 2007)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Double clicking a node with a child will expand it, if the gadget has the
+appropriate flag set. New flag added to control this.
+
+
+New in version 0.09 (24 Nov 2004)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Nodes are now given a better vertical size based on the size of the sprite
+and the height of the text.
+
+The lines plotted between nodes are no longer dotted, as the variable sized
+nodes caused the dots to not line up properly. Instead, the lines' colour
+can now be configured seperately to the text colour.
+
+Added extra fields in gadget template:
+  offset 8 - wimp colour for lines
+  offset 12 - vertical spacing between nodes
+
+
+New in version 0.08 (23 Nov 2004)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fixed bug involving deletion of root nodes.
+Fixed bug involving node selection while a branch of the tree was collapsed.
+
+
+New in version 0.06 (19 Apr 2004)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Redraw problem with text only nodes fixed.
+Redraw problem with lines in very large trees fixed.
+Removed horizontal line between node sprite and expand icon (the [+]).
+  This is a cosmetic issue, please complain if you prefer the old way.
+Added hourglass during recalculation of new tree. For large trees, this
+  operation is still quite slow unfortunately.
+
+
+New in version 0.05 (02 Apr 2004)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Redraw problems with non square pixel sprites should be fixed.
+
+
+New in version 0.04 (11 Mar 2004)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+TreeView_GetNodeText and TreeView_GetNodeSprite have changed slightly.
+You can now find the required buffer size before reading the property,
+as is conventional with such methods.
+
+Node dragging has been added. If the AllowDrags flag is set, nodes can
+be dragged by the user. If the NotifyDragEnd flag is set, an event is
+sent to the client when the drag ends. This event contains a flag to say
+if the drag ended inside or outside the treeview gadget.
+
+Fixed bug in auto update mode - when a node's sprite was set the display
+didn't update.
+
+
+Licence
+~~~~~~~
+
+TreeView is distributed under a BSD style licence, as shown below:
+
+Copyright 2004-2015 Rik Griffin <rik.grf@gmail.com>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+   1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY R GRIFFIN "AS IS" AND ANY EXPRESS
+OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL R GRIFFIN OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGE.

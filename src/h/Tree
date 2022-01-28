@@ -1,0 +1,22 @@
+/* TreeView:Tree.h		*/
+/* Rik Griffin Oct 2003		*/
+
+extern TreeNode *tree_node_add(PrivateTreeView *me);
+extern TreeNode *tree_node_add_root(PrivateTreeView *me);
+extern TreeNode *tree_node_add_child(PrivateTreeView *me);
+extern _kernel_oserror *tree_node_set_sprite(TreeNode *node, SpriteArea *area,
+  char *sprite, char *ex_sprite);
+extern _kernel_oserror *tree_node_set_text(TreeNode *node, char *text);
+extern _kernel_oserror *tree_delete_node(PrivateTreeView *me, TreeNode *n);
+extern _kernel_oserror *tree_node_get_text(TreeNode *node, char *buffer, int buffsize,
+  int *nbytes);
+extern _kernel_oserror *tree_node_get_sprite(TreeNode *node, unsigned int flags,
+  char *buffer, int buffsize, int *nbytes);
+extern _kernel_oserror *tree_set_current_node(PrivateTreeView *me, TreeNode *node);
+extern _kernel_oserror *tree_move_first_selected(PrivateTreeView *me);
+extern _kernel_oserror *tree_move_next_selected(PrivateTreeView *me);
+extern _kernel_oserror *tree_expand_node(PrivateTreeView *me, TreeNode *node, int flag, int redraw);
+
+extern _kernel_oserror *tree_node_get_sprite_length(TreeNode *node, unsigned int flags,
+  int *size);
+extern _kernel_oserror *tree_node_get_text_length(TreeNode *node, int *size);

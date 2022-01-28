@@ -1,0 +1,115 @@
+/* Harness.Handlers.c		*/
+/* © Rik Griffin Mar 2000	*/
+
+/* Generic event handlers, 				*/
+/* not related to any toolbox object in particular	*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define __harness_handlers_c
+#include "Main.h"
+#include "Handlers.h"
+#include "Errorbox.h"
+
+
+static int check_quit(void) {
+  return 1;
+}
+
+/* event handlers */
+static int toolbox_quit(int event_code, ToolboxEvent *event, IdBlock *id_block,
+void *handle) {
+  Quit = check_quit();
+  return 1;
+}
+
+
+static int message_prequit(WimpMessage *message, void *handle) {
+  if (!check_quit()) {
+    int handle;
+    wimp_send_message(Wimp_EUserMessageAcknowledge, message, message->hdr.sender,
+      0, &handle);
+  }
+  return 1;
+}
+
+
+static int message_quit(WimpMessage *message, void *handle) {
+  Quit = 1;
+  return 1;
+}
+
+
+static int message_shutdown(WimpMessage *message, void *handle) {
+  Quit = 1;
+  return 1;
+}
+
+
+static int toolbox_error(int event_code, ToolboxEvent *event, IdBlock *id_block,
+void *handle) {
+  _kernel_oserror e;
+  e.errnum = event->data.words[0];
+  strcpy(&(e.errmess[0]), &(event->data.bytes[4]));
+  report_error(&e);
+  return 1;
+}
+
+
+static int user_drag(int event, WimpPollBlock *poll_block, IdBlock *id_block,
+void *handle) {
+  tracef("user drag");
+  return 0;
+}
+
+
+int null_poll(int event, WimpPollBlock *poll_block, IdBlock *id_block,
+void *handle) {
+  int x, y, buttons;
+  ObjectId window;
+  ComponentId comp;
+  WimpGetPointerInfoBlock info;
+
+  if (inkey(KEY_SHIFT)) {
+    wimp_get_pointer_info(&info);
+    window_get_pointer_info (0, &x, &y, &buttons, &window, &comp);
+    tracef("window %x  comp %d  wimp %x", window, comp, info.window_handle);
+  }
+
+  return 0;
+}
+
+/*
+#define EVENT ((ToolboxObjectAutoCreatedEvent *)event)
+int toolbox_object_auto_created(int event_code, ToolboxEvent *event, IdBlock *id_block,
+void *handle) {
+  if (strcmp(EVENT->template_name, "StatsWin") == 0) {
+    Objects.MainWindow = id_block->self_id;
+    fprintf(stderr, "StatsWin: %08x\n", id_block->self_id);
+    toolbox_show_object(0, Objects.MainWindow, Toolbox_ShowObject_Centre, NULL, 0, 0);
+  }
+  return 1;
+}
+#undef EVENT
+*/
+
+_kernel_oserror *handlers_register_events(void) {
+  _kernel_oserror *e;
+  ER(event_register_message_handler(Wimp_MShutDown, message_shutdown, 0), e);
+  ER(event_register_message_handler(Wimp_MQuit, message_quit, 0), e);
+  ER(event_register_message_handler(Wimp_MPreQuit, message_prequit, 0), e);
+  ER(event_register_toolbox_handler(-1, Quit_Quit, toolbox_quit, 0), e);
+  ER(event_register_toolbox_handler(-1, Toolbox_Error, toolbox_error, 0), e);
+
+  ER(event_register_wimp_handler(-1, Wimp_EUserDrag, user_drag, 0), e);
+//  ER(event_register_wimp_handler(-1, Wimp_ENull, null_poll, 0), e);
+
+/*
+  ER(event_register_toolbox_handler(-1, Toolbox_ObjectAutoCreated,
+    toolbox_object_auto_created, 0), e);
+*/
+
+  return NULL;
+}

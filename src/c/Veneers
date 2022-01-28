@@ -1,0 +1,377 @@
+/* TreeView:Veneers.c		*/
+/* Rik Griffin Oct 2003		*/
+
+#include "TreeView.h"
+
+#include "swis.h"
+
+_kernel_oserror *treeview_set_state (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  unsigned int state
+) {
+
+  return
+    _swix(Toolbox_ObjectMiscOp, _INR(0,4),
+      flags, window, TreeView_SetState, gadget, state);
+}
+
+
+_kernel_oserror *treeview_get_state (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  unsigned int *state
+) {
+  unsigned int dummy;
+
+  return
+    _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+      flags, window, TreeView_GetState, gadget,
+      state == NULL ? &dummy : state);
+}
+
+
+_kernel_oserror *treeview_set_menu (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  ObjectId menu
+) {
+
+  return
+    _swix(Toolbox_ObjectMiscOp, _INR(0,4),
+      flags, window, TreeView_SetMenu, gadget, menu);
+}
+
+
+_kernel_oserror *treeview_add_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  char *text,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,4) | _OUT(0),
+    flags, window, TreeView_AddNode, gadget, text,
+    id == NULL ? &dummy : id);
+
+}
+
+
+_kernel_oserror *treeview_get_node_id (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_GetNodeID, gadget,
+    id == NULL ? &dummy : id);
+}
+
+
+extern _kernel_oserror *treeview_set_node_text (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  char *text
+) {
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,4),
+    flags, window, TreeView_SetNodeText, gadget, text);
+}
+
+
+_kernel_oserror *treeview_set_node_sprite (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  void *sprite_area,
+  char *sprite_name,
+  char *expanded_sprite_name
+) {
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,6),
+    flags, window, TreeView_SetNodeSprite, gadget, sprite_area, sprite_name,
+    expanded_sprite_name);
+
+}
+
+
+_kernel_oserror *treeview_set_node_private_word (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  void *private_word
+) {
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,4),
+    flags, window, TreeView_SetNodePrivateWord, gadget, private_word);
+
+}
+
+
+extern _kernel_oserror *treeview_get_node_text (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  char *buffer,
+  int buff_size,
+  int *nbytes
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,5) | _OUT(5),
+    flags, window, TreeView_GetNodeText, gadget, buffer, buff_size,
+    nbytes == NULL ? &dummy : nbytes);
+}
+
+
+extern _kernel_oserror *treeview_get_node_sprite (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  char *buffer,
+  int buff_size,
+  int *nbytes
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,5) | _OUT(5),
+    flags, window, TreeView_GetNodeSprite, gadget, buffer, buff_size,
+    nbytes == NULL ? &dummy : nbytes);
+}
+
+
+_kernel_oserror *treeview_get_node_private_word (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  void **private_word
+) {
+  void *dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_GetNodePrivateWord, gadget,
+    private_word == NULL ? &dummy : private_word);
+
+}
+
+
+ _kernel_oserror *treeview_move_to (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int id
+) {
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,4),
+    flags, window, TreeView_MoveTo, gadget, id);
+
+}
+
+
+_kernel_oserror *treeview_move_next (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_MoveNext, gadget,
+    id == NULL ? &dummy : id);
+
+}
+
+
+_kernel_oserror *treeview_move_previous (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_MovePrevious, gadget,
+    id == NULL ? &dummy : id);
+
+}
+
+
+_kernel_oserror *treeview_move_child (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_MoveChild, gadget,
+    id == NULL ? &dummy : id);
+
+}
+
+
+_kernel_oserror *treeview_move_parent(
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_MoveParent, gadget,
+    id == NULL ? &dummy : id);
+
+}
+
+
+_kernel_oserror *treeview_delete_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_DeleteNode, gadget,
+    id == NULL ? &dummy : id);
+
+}
+
+
+_kernel_oserror *treeview_delete_all (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+) {
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3),
+    flags, window, TreeView_DeleteAll, gadget);
+
+}
+
+
+_kernel_oserror *treeview_update_display (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+) {
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3),
+    flags, window, TreeView_UpdateDisplay, gadget);
+
+}
+
+
+_kernel_oserror *treeview_move_first_selected (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_MoveFirstSelected, gadget,
+    id == NULL ? &dummy : id);
+
+}
+
+
+_kernel_oserror *treeview_move_next_selected (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_MoveNextSelected, gadget,
+    id == NULL ? &dummy : id);
+
+}
+
+
+_kernel_oserror *treeview_expand_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+) {
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3),
+    flags, window, TreeView_ExpandNode, gadget);
+}
+
+
+_kernel_oserror *treeview_select_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+) {
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3),
+    flags, window, TreeView_SelectNode, gadget);
+}
+
+
+_kernel_oserror *treeview_make_visible (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget
+) {
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3),
+    flags, window, TreeView_MakeVisible, gadget);
+}
+
+
+_kernel_oserror *treeview_find_node (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  int x,
+  int y,
+  int *id
+) {
+  int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,5) | _OUT(0),
+    flags, window, TreeView_FindNode, gadget, x, y, id == NULL ? &dummy : id);
+}
+
+
+_kernel_oserror *treeview_get_node_state (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  unsigned int *state
+) {
+  unsigned int dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_GetNodeState, gadget, state == NULL ? &dummy : state);
+}
+
+
+_kernel_oserror *treeview_get_window_id (
+  unsigned int flags,
+  ObjectId window,
+  ComponentId gadget,
+  ObjectId *id
+) {
+  ObjectId dummy;
+
+  return _swix(Toolbox_ObjectMiscOp, _INR(0,3) | _OUT(0),
+    flags, window, TreeView_GetWindowID, gadget, id == NULL ? &dummy : id);
+}

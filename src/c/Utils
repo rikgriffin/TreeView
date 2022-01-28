@@ -1,0 +1,88 @@
+/*
+ * Things lifted from RiksLib so that the module can be
+ * built without external dependencies.
+ * Covered by the same licence as the rest of the TreeView code.
+*/
+
+#include <ctype.h>
+
+#include "Main.h"
+#include "Utils.h"
+
+
+/* strcmp, case insensitive	*/
+int rikslib_strcmp_nc(const char *a, const char *b) {
+  int ac, bc;
+  for (;;) {
+    ac = toupper(*a++);
+    bc = toupper(*b++);
+    if (ac != bc) return ac - bc;
+    if (ac == '\0') return 0;
+  };
+  return 0;
+}
+
+
+/* copies a into b, and null terminates the copy			*/
+char *rikslib_strncpy(char *b, const char *a, int len) {
+  register int i = 0;
+  while (a[i] != '\0' && len-- > 0) {
+    b[i] = a[i];
+    i++;
+  }
+  b[i] = '\0';
+  return b;
+}
+
+
+_kernel_oserror *rikslib_find_wimp_sprite(char *name, SpriteArea **area, SpriteCtrlBlock **sprite) {
+  _kernel_oserror *e;
+  SpriteArea *wimp_rom, *wimp_ram;
+
+  ER(_swix(Wimp_BaseOfSprites, _OUTR(0,1), &wimp_rom, &wimp_ram), e);
+
+  /* try RAM area first		*/
+  e = _swix(OS_SpriteOp, _INR(0,2) | _OUT(2), 0x118, wimp_ram, name, sprite);
+  if (e == NULL) {
+    *area = wimp_ram;
+  } else {
+    e = _swix(OS_SpriteOp, _INR(0,2) | _OUT(2), 0x118, wimp_rom, name, sprite);
+    if (e == NULL) *area = wimp_rom;
+  }
+
+  return e;
+}
+
+
+_kernel_oserror *rikslib_sprite_eig_factors(SpriteCtrlBlock *spr, int *x, int *y) {
+  _kernel_oserror *e;
+
+  if ((spr->mode >> 27) > 0) {
+    /* new format sprite	*/
+    if (x != NULL) {
+      switch ((spr->mode >> 1) & 0xfff) {
+        case 45 : *x = 2; break;
+        case 90 : *x = 1; break;
+        default : *x = 0; break;
+      }
+    }
+    if (y != NULL) {
+      switch ((spr->mode >> 14) & 0xfff) {
+        case 45 : *y = 2; break;
+        case 90 : *y = 1; break;
+        default : *y = 0; break;
+      }
+    }
+    return NULL;
+  }
+
+  /* old format sprite	*/
+  if (x != NULL) {
+    ER(_swix(OS_ReadModeVariable, _INR(0,1) | _OUT(2), spr->mode, 4, x), e);
+  }
+  if (y != NULL) {
+    ER(_swix(OS_ReadModeVariable, _INR(0,1) | _OUT(2), spr->mode, 5, y), e);
+  }
+
+  return NULL;
+}

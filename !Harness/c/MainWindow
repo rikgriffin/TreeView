@@ -1,0 +1,625 @@
+/* Harness.MainWindow.c		*/
+/* © Rik Griffin Mar 2000	*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define __harness_mainwindow_c
+#include "Main.h"
+#include "MainWindow.h"
+#include "Errorbox.h"
+
+#include "TreeView:TreeView.h"
+#include "Tabs:Tabs.h"
+
+#define COMPONENT_TREEVIEW		0x0
+
+#define COMPONENT_MOVEPREV		0x10
+#define COMPONENT_MOVENEXT		0x11
+#define COMPONENT_MOVECHILD		0x12
+#define COMPONENT_MOVEPARENT		0x13
+
+#define COMPONENT_ADD 			0x14
+#define COMPONENT_ADDCHILD		0x15
+#define COMPONENT_GETSTATE		0x16
+#define COMPONENT_SETSTATE		0x17
+#define COMPONENT_DELETE		0x18
+#define COMPONENT_UPDATE		0x19
+#define COMPONENT_GETFIRST		0x1a
+#define COMPONENT_GETNEXT		0x1b
+#define COMPONENT_EXPAND		0x1c
+#define COMPONENT_SELECT		0x1d
+#define COMPONENT_MAKEVISIBLE		0x1e
+#define COMPONENT_GETNODESTATE		0x1f
+
+#define COMPONENT_SETNODETEXT		0x60
+#define COMPONENT_SETNODESPRITE		0x61
+
+#define COMPONENT_WRITABLE_TEXT		0x100
+#define COMPONENT_WRITABLE_SPRITE	0x101
+#define COMPONENT_WRITABLE_EXPANDED	0x102
+#define COMPONENT_DISPLAY_NODESTATE	0x103
+#define COMPONENT_FLAGS_BASE		0x20
+
+
+static _kernel_oserror *mainwindow_register_events(void);
+static _kernel_oserror *mainwindow_deregister_events(void);
+
+static _kernel_oserror *get_state(ComponentId c) {
+  _kernel_oserror *e;
+  unsigned int state, l;
+
+  ER(treeview_get_state(0, Objects.MainPane[0], c, &state), e);
+
+  for (l = 0; (TreeViewValidFlags & (1<<l)) != 0; l++) {
+    ER(optionbutton_set_state(0, Objects.MainPane[0], COMPONENT_FLAGS_BASE + l,
+      (state & (1<<l)) != 0), e);
+  }
+
+  ER(optionbutton_set_state(0, Objects.MainPane[0], COMPONENT_FLAGS_BASE + 31,
+    (state & Gadget_Faded) != 0), e);
+
+/*
+  {
+    static int a = 0;
+    char text[256];
+
+    sprintf(text, "fish %d", a++);
+    ER(tabs_set_label(0, Objects.MainWindow, 0x1, 1, text), e);
+  }
+*/
+
+  return NULL;
+}
+
+static _kernel_oserror *set_state(ComponentId c) {
+  _kernel_oserror *e;
+  unsigned int state = 0;
+  int i, l;
+
+  for (l = 0; (TreeViewValidFlags & (1<<l)) != 0; l++) {
+    ER(optionbutton_get_state(0, Objects.MainPane[0], COMPONENT_FLAGS_BASE + l, &i), e);
+    state |= (i<<l);
+  }
+
+  ER(optionbutton_get_state(0, Objects.MainPane[0], COMPONENT_FLAGS_BASE + 31, &i), e);
+  state |= i ? Gadget_Faded : 0;
+
+  ER(treeview_set_state(0, Objects.MainPane[0], c, state), e);
+//  ER(treeview_update_display(0, Objects.MainPane[0], c), e);
+  return NULL;
+}
+
+
+/*
+static int mainwindow_null_poll(int event_code, WimpPollBlock *event,
+IdBlock *id_block, void *handle) {
+  _kernel_oserror *e;
+
+  return 0;
+}
+*/
+
+
+_kernel_oserror *mainwindow_show(void) {
+  _kernel_oserror *e;
+
+  ER(treeview_set_menu(0, Objects.MainPane[0], COMPONENT_TREEVIEW, Objects.Menu), e);
+
+  ER(toolbox_show_object(0, Objects.MainWindow, Toolbox_ShowObject_Centre,
+    NULL, 0x0, 0x0), e);
+  ER(mainwindow_register_events(), e);
+
+  ER(get_state(0x0), e);
+
+  return NULL;
+}
+
+
+static int mainwindow_has_been_hidden(int event_code, ToolboxEvent *event,
+IdBlock *id_block, void *handle) {
+//  _kernel_oserror *e;
+  mainwindow_deregister_events();
+  Quit = 1;
+//efail:
+  return 1;
+}
+
+
+static void bin(unsigned int a, int len, char *text) {
+  int i, o;
+
+  o = 0;
+  for (i = len - 1; i >= 0; i--) {
+    text[o++] = (a & (1 << i)) == 0 ? '0' : '1';
+  }
+  text[o++] = '\0';
+}
+
+
+static _kernel_oserror *show_current_node_details(void) {
+  _kernel_oserror *e;
+  char text[256];
+  unsigned int state;
+
+  ER(treeview_get_node_text(0, Objects.MainPane[0], COMPONENT_TREEVIEW, text, 256,
+    NULL), e);
+  ER(writablefield_set_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_TEXT, text),
+    e);
+
+  ER(treeview_get_node_sprite(0, Objects.MainPane[0], COMPONENT_TREEVIEW, text, 256,
+    NULL), e);
+  ER(writablefield_set_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_SPRITE,
+    text), e);
+
+  ER(treeview_get_node_sprite(1, Objects.MainPane[0], COMPONENT_TREEVIEW, text, 256,
+    NULL), e);
+  ER(writablefield_set_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_EXPANDED,
+    text), e);
+
+  ER(treeview_get_node_state(0, Objects.MainPane[0], COMPONENT_TREEVIEW, &state), e);
+  bin(state, 9, text);
+  ER(displayfield_set_value(0, Objects.MainPane[0], COMPONENT_DISPLAY_NODESTATE, text), e);
+  return NULL;
+}
+
+
+static int pane0_actionbutton_selected(int event_code, ToolboxEvent *event,
+IdBlock *id_block, void *handle) {
+  _kernel_oserror *e;
+  char text[256], spr[256], exp[256];
+  int sort;
+
+  EC(optionbutton_get_state(0, Objects.MainPane[0], 0x45, &sort), e);
+
+  switch (id_block->self_component) {
+    case COMPONENT_GETSTATE: EC(get_state(COMPONENT_TREEVIEW), e); break;
+    case COMPONENT_SETSTATE: EC(set_state(COMPONENT_TREEVIEW), e); break;
+
+    case COMPONENT_GETNODESTATE: EC(show_current_node_details(), e); break;
+
+    case COMPONENT_SETNODETEXT:
+      EC(writablefield_get_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_TEXT,
+        text, 256, NULL), e);
+      EC(treeview_set_node_text(0, Objects.MainPane[0], COMPONENT_TREEVIEW, text), e);
+      break;
+
+    case COMPONENT_SETNODESPRITE:
+      EC(writablefield_get_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_SPRITE,
+        spr, 256, NULL), e);
+      EC(writablefield_get_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_EXPANDED,
+        exp, 256, NULL), e);
+      EC(treeview_set_node_sprite(0, Objects.MainPane[0], COMPONENT_TREEVIEW, (void *)1,
+        spr, exp), e);
+      break;
+
+    case COMPONENT_MOVEPREV :
+      EC(treeview_move_previous(sort, Objects.MainPane[0], COMPONENT_TREEVIEW, NULL), e);
+      break;
+
+    case COMPONENT_MOVENEXT :
+      EC(treeview_move_next(sort, Objects.MainPane[0], COMPONENT_TREEVIEW, NULL), e);
+      break;
+
+    case COMPONENT_MOVECHILD :
+      EC(treeview_move_child(sort, Objects.MainPane[0], COMPONENT_TREEVIEW, NULL), e);
+      break;
+
+    case COMPONENT_MOVEPARENT :
+      EC(treeview_move_parent(0, Objects.MainPane[0], COMPONENT_TREEVIEW, NULL), e);
+      break;
+
+    case COMPONENT_ADD :
+      EC(writablefield_get_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_TEXT,
+        text, 256, NULL), e);
+      EC(writablefield_get_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_SPRITE,
+        spr, 256, NULL), e);
+      EC(writablefield_get_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_EXPANDED,
+        exp, 256, NULL), e);
+      EC(treeview_add_node(TreeView_AddNode_AsSibling, Objects.MainPane[0],
+        COMPONENT_TREEVIEW, text, NULL), e);
+      EC(treeview_set_node_sprite(0, Objects.MainPane[0], COMPONENT_TREEVIEW, (void *)1,
+        spr, exp), e);
+//      EC(treeview_update_display(0, Objects.MainPane[0], COMPONENT_TREEVIEW), e);
+      break;
+
+    case COMPONENT_ADDCHILD :
+      EC(writablefield_get_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_TEXT,
+        text, 256, NULL), e);
+      EC(writablefield_get_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_SPRITE,
+        spr, 256, NULL), e);
+      EC(writablefield_get_value(0, Objects.MainPane[0], COMPONENT_WRITABLE_EXPANDED,
+        exp, 256, NULL), e);
+      EC(treeview_add_node(TreeView_AddNode_AsChild, Objects.MainPane[0],
+        COMPONENT_TREEVIEW, text, NULL), e);
+      EC(treeview_set_node_sprite(0, Objects.MainPane[0], COMPONENT_TREEVIEW,
+        (void *)1, spr, exp), e);
+
+//      EC(treeview_update_display(0, Objects.MainPane[0], COMPONENT_TREEVIEW), e);
+      break;
+
+    case COMPONENT_DELETE :
+      EC(treeview_delete_node(0, Objects.MainPane[0], COMPONENT_TREEVIEW, NULL), e);
+      break;
+
+    case COMPONENT_UPDATE :
+      EC(treeview_update_display(0, Objects.MainPane[0], COMPONENT_TREEVIEW), e);
+      break;
+
+    case COMPONENT_GETFIRST :
+      EC(treeview_move_first_selected(0, Objects.MainPane[0], COMPONENT_TREEVIEW, NULL), e);
+      EC(show_current_node_details(), e);
+
+      break;
+
+    case COMPONENT_GETNEXT :
+      EC(treeview_move_next_selected(0, Objects.MainPane[0], COMPONENT_TREEVIEW, NULL), e);
+      EC(show_current_node_details(), e);
+
+      break;
+
+    case COMPONENT_EXPAND : {
+      int c, r, flags = 0;
+
+      optionbutton_get_state(0, Objects.MainPane[0], 0x41, &c);
+      optionbutton_get_state(0, Objects.MainPane[0], 0x42, &r);
+
+      if (c) flags |= TreeView_ExpandNode_Expand;
+      if (r) flags |= TreeView_ExpandNode_Recurse;
+
+      EC(treeview_expand_node(flags, Objects.MainPane[0], COMPONENT_TREEVIEW), e);
+    } break;
+
+    case COMPONENT_SELECT : {
+      int s, u, flags = 0;
+
+      optionbutton_get_state(0, Objects.MainPane[0], 0x43, &s);
+      optionbutton_get_state(0, Objects.MainPane[0], 0x44, &u);
+
+      if (s) flags |= TreeView_SelectNode_Select;
+      if (u) flags |= TreeView_SelectNode_Unique;
+
+      EC(treeview_select_node(flags, Objects.MainPane[0], COMPONENT_TREEVIEW), e);
+    } break;
+
+    case COMPONENT_MAKEVISIBLE :
+      EC(treeview_make_visible(0, Objects.MainPane[0], COMPONENT_TREEVIEW), e);
+      break;
+
+  }
+
+efail:
+  return 1;
+}
+
+
+#define BLOCK ((WimpKeyPressedEvent *)poll_block)
+static int wimp_key_pressed(int event, WimpPollBlock *poll_block, IdBlock *id_block,
+void *handle) {
+  wimp_process_key(BLOCK->key_code);
+  return 1;
+}
+#undef BLOCK
+
+
+#define BLOCK ((WimpMouseClickEvent *)poll_block)
+static int wimp_mouse_click(int event, WimpPollBlock *poll_block, IdBlock *id_block,
+void *handle) {
+
+  tracef("buttons: %x  object: %x  component: %x  parent: %x", BLOCK->buttons, id_block->self_id, id_block->self_component, id_block->parent_id);
+
+  return 1;
+}
+#undef BLOCK
+
+
+/*
+static int wimp_caret_event(int event_code, WimpPollBlock *event, IdBlock *id_block,
+void *handle) {
+
+  tracef("%s caret: id: %x c: %x  parent: %x", (int)handle ? "gain" : "lose", id_block->self_id, id_block->self_component, id_block->parent_id);
+
+  return 1;
+}
+*/
+
+
+typedef struct {
+  unsigned int	load;
+  unsigned int	exec;
+  unsigned int	length;
+  unsigned int	atts;
+  unsigned int	obj_type;
+  unsigned int	file_type;
+  char		name[200];
+} gbpb_buffer;
+
+
+/* returns number of objects found	*/
+static int scan_directory(char *path, int small, int add_this, int recurse) {
+  _kernel_oserror  *e;
+  gbpb_buffer buffer;
+  int context = 0, num = 0, child = 1, count = 0;
+  char spr[32], *exspr;
+
+  if (add_this) {
+    char *leaf;
+    leaf = find_leaf(path);
+    sprintf(spr, "%s", small ? "small_dir" : "directory");
+    exspr = small ? "small_diro" : "directoryo";
+    EL(treeview_add_node(TreeView_AddNode_AsSibling, Objects.MainPane[0],
+      COMPONENT_TREEVIEW, leaf, NULL), e, fail);
+    EL(treeview_set_node_sprite(0, Objects.MainPane[0], COMPONENT_TREEVIEW, (void *)1,
+      spr, exspr), e, fail);
+  }
+
+  while (context != -1) {
+    if (context != 0 && num == 1) {
+      ++count;
+
+      if (buffer.file_type < 0x1000) {
+        sprintf(spr, "%s_%03x", small ? "small" : "file", buffer.file_type);
+        exspr = NULL;
+      } else {
+        sprintf(spr, "%s", small ? "small_dir" : "directory");
+        exspr = small ? "small_diro" : "directoryo";
+      }
+      EL(treeview_add_node(child ? TreeView_AddNode_AsChild : TreeView_AddNode_AsSibling,
+        Objects.MainPane[0], COMPONENT_TREEVIEW, buffer.name, NULL), e, fail);
+      EL(treeview_set_node_sprite(0, Objects.MainPane[0], COMPONENT_TREEVIEW,
+        (void *)1, spr, exspr), e, fail);
+      child = 0;
+
+
+      if (recurse && buffer.file_type >= 0x1000) {
+        char sub[1024];
+        sprintf(sub, "%s.%s", path, buffer.name);
+        if (scan_directory(sub, small, 0, recurse) > 0) {
+          EL(treeview_move_parent(0, Objects.MainPane[0], COMPONENT_TREEVIEW, NULL), e, fail);
+        }
+      }
+
+    } // end if (context != 0 && num == 1)
+
+    EL(_swix(OS_GBPB, _INR(0,6) | _OUTR(3,4),
+      12, path, &buffer, 1, context, sizeof(buffer), 0,
+      &num, &context), e, fail);
+  }
+
+  return count;
+
+fail:
+  report_error(e);
+  return count;
+}
+
+
+static void report_node_under_ptr(void) {
+  _kernel_oserror *e;
+  WimpGetPointerInfoBlock p;
+  int id;
+  char text[256];
+
+  EL(wimp_get_pointer_info(&p), e, fail);
+
+  EL(treeview_find_node(0, Objects.MainPane[0], COMPONENT_TREEVIEW, p.x, p.y, &id), e, fail);
+
+  if (id != NULL) {
+    EL(treeview_move_to(0, Objects.MainPane[0], COMPONENT_TREEVIEW, id), e, fail);
+    EL(treeview_get_node_text(0, Objects.MainPane[0], COMPONENT_TREEVIEW, text, 256, NULL), e, fail);
+  } else {
+    strcpy(text, "[no node]");
+  }
+
+  tracef("Drag ended on node id %x : %s\n", id, text);
+
+  return;
+
+fail:
+  report_error(e);
+}
+
+
+static int message_data_load(WimpMessage *message, void *handle) {
+  char *path;
+  int small;
+
+//  tracef("wimp from dataload: %x", message->data.data_load.destination_window);
+
+  /* report the node where the (external) drag ended	*/
+  if (inkey(KEY_ALT)) {
+    report_node_under_ptr();
+    return 1;
+  }
+
+  if (message->data.data_load.file_type < 0x1000) return 1;
+  path = message->data.data_load.leaf_name;
+
+  treeview_delete_all(0, Objects.MainPane[0], COMPONENT_TREEVIEW);
+
+  /* check the "small icons" option	*/
+  optionbutton_get_state(0, Objects.MainPane[0], 0x40, &small);
+
+  /* if Shift pressed, just add contents of the directory as a single	*/
+  /* level in the tree, otherwise add everything recursively.		*/
+
+  if (inkey(KEY_SHIFT)) {
+    (void) scan_directory(path, small, 0, 0);
+  } else {
+    (void) scan_directory(path, small, 1, 1);
+  }
+
+  treeview_update_display(0, Objects.MainPane[0], COMPONENT_TREEVIEW);
+
+  message->hdr.your_ref = message->hdr.my_ref;
+  message->hdr.action_code = Wimp_MDataLoadAck;
+  wimp_send_message(17, message, message->hdr.sender, 0, NULL);
+
+  return 1;
+}
+
+
+#define BLOCK ((TreeViewNodeSelectedEvent *)event)
+static int treeview_node_selected(int event_code, ToolboxEvent *event,
+IdBlock *id_block, void *handle) {
+  _kernel_oserror *e;
+  char text[256];
+
+  EL(treeview_move_to(0, Objects.MainPane[0], COMPONENT_TREEVIEW, BLOCK->node), e, fail);
+  EL(treeview_get_node_text(0, Objects.MainPane[0], COMPONENT_TREEVIEW, text, 256,
+    NULL), e, fail);
+
+  tracef("Node selected: object: %x  component: %x  select flag: %d  multiple flag: %d  node id: %x  node text: %s",
+    id_block->self_id,
+    id_block->self_component,
+    (BLOCK->hdr.flags & TreeView_NodeSelected_Selected) != 0 ? 1 : 0,
+    (BLOCK->hdr.flags & TreeView_NodeSelected_Multiple) != 0 ? 1 : 0,
+    BLOCK->node,
+    text
+  );
+  return 1;
+
+fail:
+  report_error(e);
+  return 1;
+}
+#undef BLOCK
+
+
+#define BLOCK ((TreeViewNodeExpandedEvent *)event)
+static int treeview_node_expanded(int event_code, ToolboxEvent *event,
+IdBlock *id_block, void *handle) {
+  _kernel_oserror *e;
+  char text[256];
+
+  EL(treeview_move_to(0, Objects.MainPane[0], COMPONENT_TREEVIEW, BLOCK->node), e, fail);
+  EL(treeview_get_node_text(0, Objects.MainPane[0], COMPONENT_TREEVIEW, text, 256, NULL), e, fail);
+
+  tracef("Node expanded: object: %x  component: %x  expand flag: %d  node id: %x  node text: %s",
+    id_block->self_id,
+    id_block->self_component,
+    (BLOCK->hdr.flags & TreeView_NodeExpanded_Expanded) != 0 ? 1 : 0,
+    BLOCK->node,
+    text
+  );
+  return 1;
+
+fail:
+  report_error(e);
+  return 1;
+}
+#undef BLOCK
+
+
+#define BLOCK ((TreeViewNodeDraggedEvent *)event)
+static int treeview_node_dragged(int event_code, ToolboxEvent *event,
+IdBlock *id_block, void *handle) {
+  _kernel_oserror *e;
+  char text[256], dst[256], but[256];
+
+  EL(treeview_move_to(0, Objects.MainPane[0], COMPONENT_TREEVIEW, BLOCK->node), e, fail);
+  EL(treeview_get_node_text(0, Objects.MainPane[0], COMPONENT_TREEVIEW, text, 256, NULL), e, fail);
+
+  if (BLOCK->hdr.flags & TreeView_NodeDragged_OutsideGadget) {
+    strcpy(dst, "outside");
+  } else {
+    if (BLOCK->destination_node != 0) {
+      EL(treeview_move_to(0, Objects.MainPane[0], COMPONENT_TREEVIEW, BLOCK->destination_node), e, fail);
+      EL(treeview_get_node_text(0, Objects.MainPane[0], COMPONENT_TREEVIEW, dst, 256, NULL), e, fail);
+    } else {
+      strcpy(dst, "unknown");
+    }
+  }
+
+  if (BLOCK->mouse_buttons == 0x4) {
+    strcpy(but, "SELECT");
+  } else if (BLOCK->mouse_buttons == 0x1) {
+    strcpy(but, "ADJUST");
+  } else {
+    strcpy(but, "?");
+  }
+
+  tracef("Node dragged: object: %x  component: %x  node id: %x  node text: %s  destination: %s  mouse button: %s",
+    id_block->self_id,
+    id_block->self_component,
+    BLOCK->node,
+    text, dst, but
+  );
+  return 1;
+
+fail:
+  report_error(e);
+  return 1;
+}
+#undef BLOCK
+
+
+#define BLOCK ((TabsSelectionEvent *)event)
+static int tabs_selection(int event_code, ToolboxEvent *event,
+IdBlock *id_block, void *handle) {
+  _kernel_oserror *e;
+  ObjectId w;
+  int t;
+
+  EL(tabs_window_from_tab(0, Objects.MainWindow, 0x1, BLOCK->selected, &w), e, fail);
+  EL(tabs_tab_from_window(0, Objects.MainWindow, 0x1, w, &t), e, fail);
+
+  tracef("tabs: new: %d %x %d", BLOCK->selected, w, t);
+
+  return 1;
+
+fail:
+  report_error(e);
+  return 1;
+}
+#undef BLOCK
+
+
+static int menu_about_to_be_shown(int event_code, ToolboxEvent *event,
+IdBlock *id_block, void *handle) {
+
+//  tracef("menu_about_to_be_shown");
+
+  return 1;
+}
+
+
+_kernel_oserror *mainwindow_register_events(void) {
+  _kernel_oserror *e;
+  ER(event_register_toolbox_handler(Objects.MainWindow, Window_HasBeenHidden,
+    mainwindow_has_been_hidden, 0), e);
+  ER(event_register_toolbox_handler(Objects.MainPane[0], ActionButton_Selected,
+    pane0_actionbutton_selected, 0), e);
+  ER(event_register_message_handler(Wimp_MDataLoad, message_data_load, 0), e);
+
+//  ER(event_register_wimp_handler(-1, Wimp_ELoseCaret, wimp_caret_event, 0), e);
+//  ER(event_register_wimp_handler(-1, Wimp_EGainCaret, wimp_caret_event, (void *)1),e);
+//  ER(event_register_wimp_handler(-1, Wimp_EKeyPressed, wimp_key_pressed, 0), e);
+//  ER(event_register_wimp_handler(-1, Wimp_EMouseClick, wimp_mouse_click, 0), e);
+
+  ER(event_register_toolbox_handler(Objects.MainPane[0], TreeViewEvent_NodeSelected,
+    treeview_node_selected, 0), e);
+
+  ER(event_register_toolbox_handler(Objects.MainPane[0], TreeViewEvent_NodeExpanded,
+    treeview_node_expanded, 0), e);
+
+  ER(event_register_toolbox_handler(Objects.MainPane[0], TreeViewEvent_NodeDragged,
+    treeview_node_dragged, 0), e);
+
+//  ER(event_register_toolbox_handler(-1, TabsEvent_Selection, tabs_selection, 0), e);
+//  ER(tabs_set_selected(0, Objects.MainWindow, 0x1, 1, NULL), e);
+
+  ER(event_register_toolbox_handler(-1, Menu_AboutToBeShown, menu_about_to_be_shown, 0), e);
+
+  return NULL;
+}
+
+_kernel_oserror *mainwindow_deregister_events(void) {
+  event_deregister_toolbox_handler(Objects.MainWindow, Window_HasBeenHidden,
+    mainwindow_has_been_hidden, 0);
+  event_deregister_toolbox_handler(Objects.MainPane[0], ActionButton_Selected,
+    pane0_actionbutton_selected, 0);
+  return NULL;
+}

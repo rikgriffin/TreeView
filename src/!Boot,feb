@@ -1,0 +1,5 @@
+| This is so you can #include "TreeView:TreeView.h"
+| This path isn't needed for the module to be built, or to run
+
+Set TreeView$Dir <Obey$Dir>
+Set TreeView$Path <Obey$Dir>.

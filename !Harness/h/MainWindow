@@ -1,0 +1,4 @@
+/* Harness.MainWindow.h		*/
+/* © Rik Griffin Mar 2000	*/
+
+extern _kernel_oserror *mainwindow_show(void);

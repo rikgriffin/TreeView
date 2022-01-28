@@ -1,0 +1,109 @@
+/* TreeView.Move.c		*/
+/* Rik Griffin Nov 2011		*/
+
+#include "Main.h"
+#include "Redraw.h"
+
+
+#define DEBUGLEVEL	1
+
+
+/*
+ * adds or removes scrollbars from our window as specified by the
+ * flags in new_scrollbars. Won't add a scrollbar if the gadget's flags
+ * do not allow it
+*/
+static _kernel_oserror *_set_scrollbars(PrivateTreeView *me, unsigned int new_scrollbars) {
+
+  DEBUG(DEBUGLEVEL, ("_set_scrollbars: flags: %d\n", new_scrollbars));
+
+  /* Remember if the window extent calls for scrollbars, for auto scroll	*/
+  if (new_scrollbars & TreeView_HasVScroll) new_scrollbars |= TreeView_CanAutoVScroll;
+  else new_scrollbars &= ~TreeView_CanAutoVScroll;
+
+  if (new_scrollbars & TreeView_HasHScroll) new_scrollbars |= TreeView_CanAutoHScroll;
+  else new_scrollbars &= ~TreeView_CanAutoHScroll;
+
+  /* mask out disallowed bits	*/
+  if ((me->flags & TreeView_AllowVScroll) == 0) new_scrollbars &= ~TreeView_HasVScroll;
+  if ((me->flags & TreeView_AllowHScroll) == 0) new_scrollbars &= ~TreeView_HasHScroll;
+  DEBUG(DEBUGLEVEL, ("modified flags: %d\n", new_scrollbars));
+
+  me->scrollbars = new_scrollbars;
+
+  return NULL;
+}
+
+
+/* changes extent of window and adjusts scrollbars as required	*/
+_kernel_oserror *_update_extent(PrivateTreeView *me) {
+  _kernel_oserror  *e;
+  BBox extent;
+  unsigned int new_flags;
+  int xsize, ysize, xextent, yextent;
+
+  xextent = me->x_extent;
+  yextent = me->y_extent;
+
+  DEBUG(DEBUGLEVEL, ("\n_update_extent: %d x %d  scrollbar size: %d %d  xeig: %d yeig: %d\n", xextent, yextent, VScrollSize, HScrollSize, ScreenXEig, ScreenYEig));
+
+  /* Find the size of the window's visible area			*/
+  xsize = me->box.xmax - me->box.xmin;
+  ysize = -(me->box.ymax - me->box.ymin);	// negative
+
+  /* check if new extent is bigger than visible area		*/
+  /* and if so, add scrollbars.					*/
+  new_flags = me->scrollbars;
+
+  if (xextent > xsize) new_flags |= TreeView_HasHScroll;	// add scrollbar
+  else {
+    new_flags &= ~TreeView_HasHScroll;		// remove scrollbar
+    xextent = xsize;				// expand work area to fit visible area
+  }
+
+  if (yextent < ysize) new_flags |= TreeView_HasVScroll;	// add scrollbar
+  else {
+    new_flags &= ~TreeView_HasVScroll;		// remove scrollbar
+    yextent = ysize;				// expand work area to fit visible area
+  }
+
+  if (me->scrollbars != new_flags) {
+    ER(_set_scrollbars(me, new_flags), e);
+  }
+
+  DEBUG(DEBUGLEVEL, ("gadget bbox: %d %d %d %d\n", me->box.xmin, me->box.ymin, me->box.xmax, me->box.ymax));
+
+  extent.xmin = 0;
+  extent.xmax = xextent;
+  extent.ymin = yextent;
+  extent.ymax = 0;
+
+  if (me->object_id != 0) {
+    ER(window_set_extent(0, me->object_id, &extent), e);
+    DEBUG(DEBUGLEVEL, ("set window extent: %d x %d\n", extent.xmax, extent.ymin));
+  }
+
+  return NULL;
+}
+
+
+_kernel_oserror *gadget_move(PrivateTreeView *me, BBox *box) {
+
+  DEBUG(DEBUGLEVEL, ("gadget_move: %d %d %d %d\n", box->xmin, box->ymin, box->xmax, box->ymax));
+
+  me->box = *box;
+
+  if (me->scrollbars & TreeView_HasVScroll) me->box.xmax -= VScrollSize;
+  if (me->scrollbars & TreeView_HasHScroll) me->box.ymin += HScrollSize;
+
+  if (me->flags & TreeView_FlatMode) {
+//    if (me->flags & TreeView_AutoUpdate) {
+      (void) _make_icons(me, 2);
+//    }
+  } else {
+    _update_extent(me);
+    _show(me);
+  }
+
+  return NULL;
+}

@@ -1,0 +1,17 @@
+/* TreeView:Rename.c		*/
+/* Rik Griffin Mar 2004		*/
+
+#include "Main.h"
+
+
+#define DEBUG_LEVEL	3
+
+
+_kernel_oserror *rename_start(PrivateTreeView *me, TreeNode *node) {
+  IGNORE(me);
+  IGNORE(node);
+
+  DEBUG(0, ("rename node %p\n", (void *)node));
+
+  return NULL;
+}

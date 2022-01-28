@@ -1,0 +1,106 @@
+/* TreeView.Main.h		*/
+/* Rik Griffin Oct 2003		*/
+
+#include "kernel.h"
+#include "swis.h"
+
+#include "toolbox.h"
+#include "window.h"
+#include "wimplib.h"
+
+#include "Consts.h"
+#include "Header.h"
+#include "TreeView.h"
+#include "Private.h"
+#include "Utils.h"
+#include "glib.h"
+
+
+#define IGNORE(x) (void)(x)
+
+#define MAX(a,b) (a > b ? a : b)
+#define MIN(a,b) (a < b ? a : b)
+#define ABS(a) (a > 0 ? a : -a)
+#define SGN(a) (a == 0 ? 0 : (a > 0 ? 1 : -1))
+#define SWAP_INT(a, b) do { int c = a; a = b; b = c; } while (0);
+
+
+#ifdef _main_c
+ #define GLOBALv(name,type,val) extern type name; type name = val
+ #define GLOBAL(name,type) extern type name; type name
+#else
+ #define GLOBALv(name,type,val) extern type name
+ #define GLOBAL(name,type) extern type name
+#endif
+
+GLOBALv(RedrawingWindow, int, 0);
+
+GLOBALv(DraggingTreeView, PrivateTreeView *, NULL);
+GLOBALv(DraggingNode, TreeNode *, NULL);
+GLOBALv(DraggingNodeCount, int, 0);
+GLOBALv(DraggingButtons, int, 0);
+
+GLOBALv(VScrollSize, unsigned int, 0);
+GLOBALv(HScrollSize, unsigned int, 0);
+GLOBALv(ScreenXEig, unsigned int, -1);
+GLOBALv(ScreenYEig, unsigned int, -1);
+GLOBALv(Sprites, SpriteArea *, NULL);
+GLOBALv(TreeViewList, PrivateTreeView **, NULL);
+GLOBALv(ListSize, int, 0);
+GLOBALv(NewToolbox, int, 0);
+
+#undef GLOBALv
+#undef GLOBAL
+
+
+//extern int Filter_ToolboxEvents[];
+//extern int Filter_WimpMessages[];
+extern int Filter_WimpEvents[];
+extern char Sprites_c[];
+
+
+#if Debug_On
+ #pragma -v1
+ extern void debug_fn(char *, ...);
+ #pragma -v0
+
+ #define DEBUG(l,x) do { if (l <= Debug_Level) debug_fn x;} while (0)
+#else
+ #define DEBUG(l,x)
+#endif
+
+
+#ifdef _main_c
+  extern _kernel_oserror GlobalError;
+  _kernel_oserror GlobalError = { 0, "" };
+#else
+  extern _kernel_oserror GlobalError;
+#endif
+
+
+#if Debug_On
+
+#define EL(x,e,l) do {\
+  if (((e) = (x)) != NULL) {\
+  MemCheck_checking c; c = MemCheck_SetChecking(0,0);\
+  sprintf(GlobalError.errmess, "%s (%s %d)", (e)->errmess, __FILE__, __LINE__);\
+  GlobalError.errnum = (e)->errnum;\
+  MemCheck_RestoreChecking(c);\
+  e = &GlobalError;\
+  goto l; }\
+  } while(0)
+
+#define ER(x,e) do {\
+  if ((e = (x)) != NULL) { \
+  MemCheck_checking c; c = MemCheck_SetChecking(0,0);\
+  sprintf(GlobalError.errmess, "%s (%s %d)", (e)->errmess, __FILE__, __LINE__);\
+  GlobalError.errnum = (e)->errnum;\
+  MemCheck_RestoreChecking(c);\
+  e = &GlobalError;\
+  return e; }\
+} while(0)
+
+#else
+  #define ER(x,e) if ((e = (x)) != NULL) return e
+  #define EL(x, e, l) if ((e = (x)) != NULL) goto l
+#endif

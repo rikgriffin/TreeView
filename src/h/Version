@@ -1,0 +1,5 @@
+#define Module_MajorVersion_CMHG     	0.23
+#define Module_MinorVersion_CMHG	© Rik Griffin 2003-19
+#define Module_Date_CMHG      		22 Aug 2019
+
+#define MODULE_VERSION                  23

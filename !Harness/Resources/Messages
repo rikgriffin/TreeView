@@ -1,0 +1,12 @@
+# Harness messages file
+_TaskName:Harness
+_Sprite:!harness
+
+OK:OK
+YES:Yes
+NO:No
+CANC:Cancel
+QUIT:Quit
+
+MESS:Message from Harness
+ERR:Error from Harness

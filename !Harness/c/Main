@@ -1,0 +1,133 @@
+/* Harness.Main.c		*/
+/* © Rik Griffin Mar 2000	*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+#include <time.h>
+
+#define __main_c
+#define __harness_main_c
+#include "Main.h"
+#include "MainWindow.h"
+#include "Init.h"
+#include "Handlers.h"
+#include "MessTrans.h"
+#include "Errorbox.h"
+
+
+int main(int argc, char *argv[]) {
+  _kernel_oserror *e;
+  int event_code;
+  WimpPollBlock block;
+
+  EL(initialise(), e, fail);
+  EL(make_objects(), e, fail);
+  EL(register_events(), e, fail);
+
+  /* poll loop */
+  while (!Quit) {
+    unsigned int t;
+    _swix(OS_ReadMonotonicTime, _OUT(0), &t);
+    event_poll_idle(&event_code, &block, t + Poll_Idle_Delay, NULL);
+  }
+
+  exit(EXIT_SUCCESS);
+
+fail:
+  report_error(e);
+  exit(EXIT_FAILURE);
+}
+
+
+int inkey(int key) {
+  int pressed;
+
+  if (_swix(OS_Byte, _INR(0,1) | _OUT(1), 121, key ^ 0x80, &pressed) == NULL) {
+    if (pressed == 0xff) return 1;
+  }
+  return 0;
+}
+
+
+char *find_leaf(char *path) {
+  char *l;
+  l = path + strlen(path);
+  do { l--; } while (l >= path && l[0] != '.' && l[0] != ':');
+  return l+1;
+}
+
+
+char *lookup(char *token) {
+  _kernel_oserror *e;
+  static char buffer[256];
+  if ((e = messagetrans_lookup(&Messages, token, buffer, 256)) != NULL) {
+    tracef("%s", e->errmess);
+    sprintf(buffer, "Token %s not found", token);
+  }
+  return buffer;
+}
+
+
+void slookupf(char *buffer, char *token, ...) {
+  va_list ap;
+  va_start(ap, token);
+  vsprintf(buffer, lookup(token), ap);
+  va_end(ap);
+}
+
+
+void report_error(_kernel_oserror *e) {
+  char ok[64], quit[64], sprite[16], title[64];
+  strcpy(ok, lookup("OK"));
+  strcpy(quit, lookup("QUIT"));
+  strcpy(sprite, lookup("_Sprite"));
+  strcpy(title, lookup("ERR"));
+  if (error_box(sprite, title, e->errmess, 2, ok, quit) == 2) Quit = 1;
+}
+
+
+void report_error1(_kernel_oserror *e) {
+  char ok[64], sprite[16], title[64];
+  strcpy(sprite, lookup("_Sprite"));
+  strcpy(title, lookup("ERR"));
+  strcpy(ok, lookup("OK"));
+  error_box(sprite, title, e->errmess, 1, ok);
+}
+
+
+void report(char *token) {
+  char ok[64], sprite[16], title[64], text[256];
+  strcpy(sprite, lookup("_Sprite"));
+  strcpy(title, lookup("MESS"));
+  strcpy(ok, lookup("OK"));
+  strcpy(text, lookup(token));
+  error_box(sprite, title, text, 1, ok);
+}
+
+
+void vreport(char *token, ...) {
+  char ok[64], sprite[16], title[64], text[256];
+  va_list ap;
+  strcpy(sprite, lookup("_Sprite"));
+  strcpy(title, lookup("MESS"));
+  strcpy(ok, lookup("OK"));
+  va_start(ap, token);
+  vsprintf(text, lookup(token), ap);
+  va_end(ap);
+  error_box(sprite, title, text, 1, ok);
+}
+
+
+void vreport_raw(char *format, ...) {
+  char ok[64], sprite[16], title[64], text[256];
+  va_list ap;
+  strcpy(sprite, lookup("_Sprite"));
+  strcpy(title, lookup("MESS"));
+  strcpy(ok, lookup("OK"));
+  va_start(ap, format);
+  vsprintf(text, format, ap);
+  va_end(ap);
+  error_box(sprite, title, text, 1, ok);
+}

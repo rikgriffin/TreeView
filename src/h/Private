@@ -1,0 +1,227 @@
+/* TreeView:Private.h		*/
+/* Rik Griffin Oct 2003		*/
+
+
+typedef struct TreeNode_s {
+  unsigned int		magic;
+
+  struct TreeNode_s	*next;
+  struct TreeNode_s	*prev;
+  struct TreeNode_s	*child;
+  struct TreeNode_s	*parent;
+
+  struct {
+    int			valid;		// children's sorted list is sorted
+    struct TreeNode_s	*child;
+    struct TreeNode_s	*next;
+    struct TreeNode_s	*prev;
+  } sorted;
+
+  int			child_count;
+
+  SpriteArea		*sprite_area;
+  char			sprite[16];		// sprite name
+  char			sprite_ex[16];		// sprite name when expanded
+  char			*text;
+  void			*private_word;
+
+  int			expand_child;	// flag, is node expanded to show children
+
+  WimpPlotIconBlock	icon;			// flags word is 0 if icon not used
+  WimpPlotIconBlock	text_icon;		// flags word is 0 if icon not used
+  WimpPlotIconBlock	expand_icon;
+
+  int			width, height;		// convenience values
+  BBox			obox;			// overall bounding box, used for redraws
+} TreeNode;
+
+
+typedef struct SelectionNode_s {
+  TreeNode			*node;
+  struct SelectionNode_s	*next;
+} SelectionNode;
+
+
+/* The internal data structure for a TreeView object	*/
+typedef struct {
+  ObjectId	parent_id;
+  ComponentId	component_id;
+  ObjectId	object_id;
+  ObjectId	menu;
+  BBox		box;			// visible area of gadget in parent window
+  int		x_extent, y_extent;	// area covered by our icons
+
+  unsigned int	flags;
+  int		rows, cols;		// used for redraw shortcuts
+
+  int		wimp_object;
+  int		wimp_parent;
+
+  unsigned int	scrollbars;
+  unsigned int	foreground_wimp;
+  unsigned int	background_wimp;
+  unsigned int	linecolour_wimp;
+  unsigned int	vertical_spacing;
+  unsigned int	horizontal_spacing;
+
+  TreeNode	*root_node;
+  TreeNode	*current_node;
+  SelectionNode	selection_base;
+
+} PrivateTreeView;
+
+
+/* Misc functions	*/
+extern void find_tool_sizes(unsigned int *title, unsigned int *vscroll,
+  unsigned int *hscroll);
+extern void find_screen_eigs(unsigned int *xeig, unsigned int *yeig);
+extern void service_mode_change(void);
+extern unsigned int faded_background_colour(unsigned int fore, unsigned int back);
+extern char *debug_node_text(TreeNode *node);
+extern char *debug_node_sprite(TreeNode *node);
+
+_kernel_oserror *convert_screen_to_work(PrivateTreeView *me, int *x, int *y);
+_kernel_oserror *convert_bbox_screen_to_work(PrivateTreeView *me, BBox *box);
+
+extern TreeNode *find_node_at_coords(PrivateTreeView *me, TreeNode *node, int x, int y,
+  int *icon);
+
+/* wimp handling stuff etc	*/
+extern _kernel_oserror *_show(PrivateTreeView *me);
+extern _kernel_oserror *_show_all(void);
+extern _kernel_oserror *_update_extent(PrivateTreeView *me/*, int xextent, int yextent*/);
+extern _kernel_oserror *_force_redraw(PrivateTreeView *me);
+extern _kernel_oserror *_force_redraw_node(PrivateTreeView *me, TreeNode *node);
+
+extern PrivateTreeView *_treeview_from_wimp_window(int wimp);
+extern _kernel_oserror *_add_treeview_to_list(PrivateTreeView *me);
+extern void remove_treeview_from_list(PrivateTreeView *me);
+
+
+/* events		*/
+extern void send_selection_event(PrivateTreeView *me, TreeNode *node, int multiple,
+  int select);
+extern void send_expand_event(PrivateTreeView *me, TreeNode *node, int expand);
+extern void send_rename_event(PrivateTreeView *me, TreeNode *node);
+extern void send_drag_event(PrivateTreeView *me, TreeNode *node, int count);
+extern void send_scroll_event(PrivateTreeView *me, WimpOpenWindowBlock *block);
+//extern void send_clicked_event(PrivateTreeView *me, TreeNode *node);
+
+extern int inkey(int key);
+
+#define KEY_SHIFT       0
+#define KEY_CTRL        1
+#define KEY_ALT         2
+#define KEY_LEFT_SHIFT  3
+#define KEY_LEFT_CTRL   4
+#define KEY_LEFT_ALT    5
+#define KEY_RIGHT_SHIFT 6
+#define KEY_RIGHT_CTRL  7
+#define KEY_RIGHT_ALT   8
+
+
+/* flags for _select_node function	*/
+#define SELECT_TOGGLE	-1
+#define SELECT_CLEAR	0
+#define SELECT_SELECT	1
+
+#define NO_RECURSE	0
+#define RECURSE		1
+
+//#define NO_CLICK	0
+//#define FROM_CLICK	1
+
+/* selection functions	*/
+extern void _select_node(PrivateTreeView *me, TreeNode *node, int toggle, int recurse);
+
+extern void _delete_all_selection(PrivateTreeView *me);
+extern SelectionNode *find_selection_node(PrivateTreeView *me, TreeNode *node);
+extern void _update_selected_nodes(PrivateTreeView *me);
+extern int selection_node_count(PrivateTreeView *me);
+extern int remove_selection_node(PrivateTreeView *me, TreeNode *node, int recurse);
+
+
+extern _kernel_oserror *rename_start(PrivateTreeView *me, TreeNode *node);
+extern _kernel_oserror *_plot_init(void);
+
+extern _kernel_oserror *drag_start(PrivateTreeView *me, TreeNode *node, WimpMouseClickEvent *mouse);
+
+extern _kernel_oserror *dragbox_start(PrivateTreeView *me, WimpMouseClickEvent *mouse);
+
+
+extern _kernel_oserror *gadget_move(PrivateTreeView *me, BBox *box);
+extern _kernel_oserror *method_set_gadget_state (PrivateTreeView *me, unsigned int flags);
+
+
+extern _kernel_oserror *gadget_add (
+  /* in */
+  TreeView *templ,
+  ObjectId parent,
+  unsigned int wimp_window,
+  /* out */
+  int *r_handle,
+  int **r_icons
+);
+
+
+extern _kernel_oserror *gadget_remove (
+  /* in */
+  int recurse,
+  PrivateTreeView *me
+);
+
+
+extern _kernel_oserror *gadget_plot (
+  /* in */
+  TreeView *templ
+);
+
+
+extern _kernel_oserror *gadget_method (
+  /* in */
+  PrivateTreeView *me,
+  _kernel_swi_regs *r
+);
+
+
+extern int _filter(_kernel_swi_regs *r);
+
+
+/* 'me->scrollbar' flags	*/
+#define TreeView_HasVScroll	(1<<0)
+#define TreeView_HasHScroll	(1<<1)
+#define TreeView_CanAutoVScroll	(1<<2)
+#define TreeView_CanAutoHScroll	(1<<3)
+
+#define TREE_ICON_NONE		0
+#define TREE_ICON_SPRITE	1
+#define TREE_ICON_TEXT		2
+#define TREE_ICON_EXPAND	3
+
+
+#define EXPAND_ICON_XSIZE	44
+#define EXPAND_ICON_YSIZE	22
+
+#define NO_EXPAND_ICON_XSIZE	8
+
+#define PLOT_DRAW_RELATIVE	1
+#define PLOT_INVERSE_RELATIVE	2
+#define PLOT_MOVE		4
+#define PLOT_DRAW		5
+#define PLOT_BACK		7
+#define PLOT_INVERSE		6
+
+#define PLOT_LINE		0
+#define PLOT_DOTTED_LINE	16
+#define PLOT_DOTTED_LINE_NO_END		24
+#define PLOT_DOTTED_LINE_NO_FIRST	32
+#define PLOT_DOTTED_LINE_CONT	48
+
+#define PLOT_TRIANGLE_FILL	80
+#define PLOT_RECTANGLE_FILL	96
+#define PLOT_ARC		160
+#define PLOT_SEGMENT		168
+#define PLOT_BLOCK_COPY		190
+#define PLOT_ELLIPSE		192
+#define PLOT_ELLIPSE_FILL	200
+

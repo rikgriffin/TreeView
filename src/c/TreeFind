@@ -1,0 +1,200 @@
+/* TreeView:TreeFind.c		*/
+/* Rik Griffin Dec 2011		*/
+
+#include <string.h>
+
+#include "Main.h"
+#include "TreeFind.h"
+
+#define DEBUGLEVEL	2
+
+
+int FindNodeCount;
+
+
+/*
+ * Given coordinates that are inside a node's overall bbox (obox),
+ * see which of the node's icons are at that location.
+*/
+static int which_node_icon(TreeNode *node, int x, int y) {
+
+  /* Check node's sprite bbox	*/
+  if (node->icon.flags != 0) {
+    if (node->icon.bbox.xmin < x && x < node->icon.bbox.xmax &&
+        node->icon.bbox.ymin < y && y < node->icon.bbox.ymax) {
+      return TREE_ICON_SPRITE;
+    }
+  }
+
+  /* Check node's text bbox	*/
+  if (node->text_icon.flags != 0) {
+    if (node->text_icon.bbox.xmin < x && x < node->text_icon.bbox.xmax &&
+        node->text_icon.bbox.ymin < y && y < node->text_icon.bbox.ymax) {
+      return TREE_ICON_TEXT;
+    }
+  }
+
+  /* Check node's expand icon bbox	*/
+  if (node->expand_icon.flags != 0) {
+    if (node->expand_icon.bbox.xmin < x && x < node->expand_icon.bbox.xmax &&
+        node->expand_icon.bbox.ymin < y && y < node->expand_icon.bbox.ymax) {
+      return TREE_ICON_EXPAND;
+    }
+  }
+
+  return TREE_ICON_NONE;
+}
+
+
+#if 0
+TreeNode *tree_find_node_at_coords0(PrivateTreeView *me, TreeNode *node, int x, int y, int *icon) {
+  static int level = 0;
+
+  DEBUG(DEBUGLEVEL, ("tree_find_node_at_coords (%d): %d, %d\n", ++level, x, y));
+
+  while (node != NULL) {
+    FindNodeCount++;
+
+    /* Check overall bbox for quick reject	*/
+    if (node->obox.xmin < x && x < node->obox.xmax && node->obox.ymin < y && y < node->obox.ymax) {
+      int i;
+
+      if ((i = which_node_icon(node, x, y)) != TREE_ICON_NONE) {
+        if (icon != NULL) *icon = i;
+        level -= 1;
+        return node;
+      }
+
+    } // end if (node's bbox)
+
+    /* Check this node's children	*/
+    if (node->child != NULL) {
+      TreeNode *found;
+
+      if ((found = tree_find_node_at_coords(me, node->child, x, y, icon)) != NULL) {
+        level -= 1;
+        return found;
+      }
+    }
+
+    node = node->next;
+  }
+
+  if (icon != NULL) *icon = TREE_ICON_NONE;
+  level -= 1;
+  return NULL;
+}
+#endif
+
+
+/*
+ * Specify x and y in OS coordinates relative to the TreeView's work area.
+ * Returns the node clicked on or NULL. If returning a node, *icon is updated
+ * to one of: TREE_ICON_SPRITE, TREE_ICON_TEXT or TREE_ICON_EXPAND
+*/
+TreeNode *tree_find_node_at_coords(PrivateTreeView *me, int x, int y, int *icon) {
+  TreeNode *next, *node;
+
+  if ((node = me->root_node->sorted.child) == NULL) return NULL;
+  node = me->root_node;
+
+  while (node != NULL) {
+    FindNodeCount++;
+
+    DEBUG(DEBUGLEVEL, ("tree_find_node_at_coords: %p (%s)\n", (void *)node, debug_node_text(node)));
+
+    /* If next node, in display order, is above the position, we can skip	*/
+    if (node->sorted.next != NULL && node->sorted.next->obox.ymin > y) {
+      DEBUG(DEBUGLEVEL, ("next sorted node %s above y: %d %d\n", debug_node_text(node->sorted.next), node->sorted.next->obox.ymin, y));
+      node = node->sorted.next;
+      continue;
+    }
+    /* if this node is below the position, we have finished			*/
+    if (node->obox.ymax < y) {
+      DEBUG(DEBUGLEVEL, ("This node %s below y: %d %d\n", debug_node_text(node), node->obox.ymax, y));
+      return NULL;
+    }
+
+    if (node->sorted.child != NULL && node->expand_child) next = node->sorted.child;
+    else if (node->sorted.next != NULL) next = node->sorted.next;
+    else {
+
+      next = NULL;
+      while (node != me->root_node && next == NULL) {
+        node = node->parent;
+        if (node->sorted.next != NULL) next = node->sorted.next;
+        DEBUG(DEBUGLEVEL, ("  node %p (%s)  next %p (%s)\n", (void *)node, debug_node_text(node), (void *)next, debug_node_text(next)));
+      }
+
+    }
+
+    if (next == NULL) return NULL;
+    node = next;
+
+    /* Check overall bbox first	*/
+    if (node->obox.xmin < x && x < node->obox.xmax && node->obox.ymin < y && y < node->obox.ymax) {
+      int i;
+
+      if ((i = which_node_icon(node, x, y)) != TREE_ICON_NONE) {
+        if (icon != NULL) *icon = i;
+        return node;
+      }
+    } // end if (inside obox)
+
+  } // end while (node != NULL)
+
+  return NULL;
+}
+
+
+/*
+ * Call repeatedly, starting with the parent node, then with the returned node.
+ * Each call returns a node overlapping the BBox, or NULL if finished.
+*/
+TreeNode *tree_find_node_in_bbox(PrivateTreeView *me, TreeNode *node, BBox *box) {
+  TreeNode *next;
+
+  while (node != NULL) {
+    FindNodeCount++;
+
+    DEBUG(DEBUGLEVEL, ("tree_find_node_in_bbox: %p (%s)\n", (void *)node, debug_node_text(node)));
+
+    /* If next node, in display order, is above the box, we can skip	*/
+    if (node->sorted.next != NULL && node->sorted.next->obox.ymin > box->ymax) {
+      DEBUG(DEBUGLEVEL, ("next sorted node %s above box: %d %d\n", debug_node_text(node->sorted.next), node->sorted.next->obox.ymin, box->ymax));
+      node = node->sorted.next;
+      continue;
+    }
+    /* if this node is below the box, we have finished			*/
+    if (node->obox.ymax < box->ymin) {
+      DEBUG(DEBUGLEVEL, ("This node %s below box: %d %d\n", debug_node_text(node), node->obox.ymax, box->ymin));
+      return NULL;
+    }
+
+    if (node->sorted.child != NULL && node->expand_child) next = node->sorted.child;
+    else if (node->sorted.next != NULL) next = node->sorted.next;
+    else {
+
+      next = NULL;
+      while (node != me->root_node && next == NULL) {
+        node = node->parent;
+        if (node->sorted.next != NULL) next = node->sorted.next;
+        DEBUG(DEBUGLEVEL, ("  node %p (%s)  next %p (%s)\n", (void *)node, debug_node_text(node), (void *)next, debug_node_text(next)));
+      }
+
+    }
+
+    if (next == NULL) return NULL;
+    node = next;
+
+    /* Check overall bbox	*/
+    if (node->obox.xmin > box->xmax) continue;
+    if (node->obox.xmax < box->xmin) continue;
+    if (node->obox.ymin > box->ymax) continue;
+    if (node->obox.ymax < box->ymin) continue;
+
+    return node;
+  } // end while (node != NULL)
+
+  return NULL;
+}

@@ -1,0 +1,680 @@
+/* TreeView:Filters.c		*/
+/* Rik Griffin Oct 2003		*/
+
+#include <stdlib.h>
+#include <string.h>
+
+#include "Main.h"
+#include "Tree.h"
+#include "TreeFind.h"
+#include "Redraw.h"
+
+
+#define DEBUGLEVEL	1
+
+#if Debug_On
+#define DEBUG_EVENT_CODE_MAX 20
+static char *Debug_Event_Codes[] = {
+  "Wimp_ENull",				// 0
+  "Wimp_ERedrawWindow",			// 1
+  "Wimp_EOpenWindow",			// 2
+  "Wimp_ECloseWindow",			// 3
+  "Wimp_EPointerLeavingWindow",		// 4
+  "Wimp_EPointerEnteringWindow",	// 5
+  "Wimp_EMouseClick",			// 6
+  "Wimp_EUserDrag",			// 7
+  "Wimp_EKeyPressed",			// 8
+  "Wimp_EMenuSelection",		// 9
+  "Wimp_EScrollRequest",		// 10
+  "Wimp_ELoseCaret",			// 11
+  "Wimp_EGainCaret",			// 12
+  "Wimp_EPollWordNonZero",		// 13
+  "", "", "",				// 14, 15, 16
+  "Wimp_EUserMessage",			// 17
+  "Wimp_EUserMessageRecorded",		// 18
+  "Wimp_EUserMessageAcknowledge"	// 19
+};
+#endif
+
+
+#define LIST_CHUNK	4
+
+
+static _kernel_oserror *grow_list(void) {
+  PrivateTreeView **n;
+  int i;
+
+  DEBUG(DEBUGLEVEL+1, ("growing treeview list: "));
+
+  if (TreeViewList == NULL) {
+    if ((n = _mem_allocate(sizeof(PrivateTreeView *) * LIST_CHUNK)) == NULL) goto nomem;
+  } else {
+    if ((n = _mem_extend(TreeViewList, sizeof(PrivateTreeView *) * LIST_CHUNK)) == NULL)
+      goto nomem;
+  }
+
+  for (i = ListSize; i < ListSize + LIST_CHUNK; i++) {
+    n[i] = NULL;
+  }
+
+  ListSize += LIST_CHUNK;
+  TreeViewList = n;
+
+  DEBUG(DEBUGLEVEL+1, ("ok\n"));
+
+  return NULL;
+
+nomem:
+  DEBUG(0, ("gow_list failed\n"));
+  return (_kernel_oserror *)"   @malloc failed";
+}
+
+
+static PrivateTreeView **find_list_entry_from_treeview(PrivateTreeView *t) {
+  int i;
+  for (i = 0; i < ListSize; i++) {
+    if (TreeViewList[i] == t) return TreeViewList + i;
+  }
+  return NULL;
+}
+
+
+static PrivateTreeView **find_list_entry_from_wimp(int wimp) {
+  int i;
+  for (i = 0; i < ListSize; i++) {
+    if (TreeViewList[i] != NULL) {
+      if (TreeViewList[i]->wimp_object == wimp) return TreeViewList + i;
+    }
+  }
+  return NULL;
+}
+
+
+_kernel_oserror *_add_treeview_to_list(PrivateTreeView *me) {
+  _kernel_oserror *e;
+  PrivateTreeView **l = NULL;
+
+  while (l == NULL) {
+    if ((l = find_list_entry_from_treeview(NULL)) == NULL) {
+      ER(grow_list(), e);
+    }
+  }
+
+  /* l points to free slot in the list	*/
+  *l = me;
+
+  DEBUG(DEBUGLEVEL, ("Added treeview %p to global list\n", (void *)me));
+
+  return NULL;
+}
+
+
+void remove_treeview_from_list(PrivateTreeView *me) {
+  PrivateTreeView **l = NULL;
+
+  if ((l = find_list_entry_from_treeview(me)) != NULL) {
+    *l = NULL;
+    DEBUG(DEBUGLEVEL, ("Removed treeview %p from global list\n", (void *)me));
+  }
+}
+
+
+PrivateTreeView *_treeview_from_wimp_window(int wimp) {
+  PrivateTreeView **l;
+
+  l = find_list_entry_from_wimp(wimp);
+  if (l != NULL) return *l;
+
+  return NULL;
+}
+
+
+/*
+ * The selection when menu is clicked is supposed to mimic the way the
+ * Filer works. However it doesn't exactly - the Filer will select an
+ * object clicked with menu if any other selection was also made with
+ * the menu button.
+*/
+static int menu_click(PrivateTreeView *me, TreeNode *n) {
+  unsigned int recurse = NO_RECURSE, selected;
+
+  if ((me->flags & TreeView_SelectChildren) != 0) recurse = RECURSE;
+
+  if (n != NULL && me->flags & TreeView_AllowSelection) {
+    /* select the single node clicked on	*/
+    selected = selection_node_count(me);
+    if (selected == 0) {
+      //_delete_all_selection(me);
+      _select_node(me, n, SELECT_SELECT, recurse);
+    }
+  }
+
+  if (me->menu != 0) {
+    toolbox_show_object(0, me->menu, Toolbox_ShowObject_Default, NULL, me->parent_id, me->component_id);
+  }
+
+  return 1;		// always pass on menu clicks
+}
+
+
+#include <time.h>
+
+/* we need to find which virtual icon was clicked on	*/
+/* Mouse coords in the event block are screen absolute	*/
+
+/*
+ * Our window button type is 10:
+ *  Double clicks return button code
+ *  Drag returns buttons << 4
+ *  Single click returns buttons << 8
+ *
+ * Menu click anywhere - call menu_click()
+ * Select [double] click on no node - clear selection
+ * Adjust [double] click on no node - do nothing
+ * Drag over node - start drag of selection
+ * Drag over background - start dragbox to select nodes
+ * Double click on node - expand it if allowed
+
+ * return: 0 if we haven't done anything
+           1 if we have upated the IdBlock
+          -1 to claim the event so client app doesn't see it
+*/
+static int wimp_event_mouse_click(PrivateTreeView *me, WimpMouseClickEvent *event, IdBlock *id) {
+//  WimpGetWindowStateBlock state;
+  _kernel_oserror *e;
+  int x, y, icon;
+  TreeNode *n;
+  clock_t t;
+
+  /* update id block so client sees mouse click on its own window	*/
+  /* Except the Toolbox doesn't currently support this			*/
+  id->self_id = me->parent_id;
+  id->self_component = me->component_id;
+
+//  state.window_handle = me->wimp_object;
+//  EL(wimp_get_window_state(&state), e, fail);
+//
+//  x = event->mouse_x - state.visible_area.xmin + state.xscroll;
+//  y = event->mouse_y - state.visible_area.ymax + state.yscroll;
+
+  x = event->mouse_x;
+  y = event->mouse_y;
+  EL(convert_screen_to_work(me, &x, &y), e, fail);
+  DEBUG(DEBUGLEVEL, ("mouse click at %d, %d -> %d, %d\n", event->mouse_x, event->mouse_y, x, y));
+
+
+  t = clock();
+  FindNodeCount = 0;
+
+  /*
+    * Find which node clicked on, NULL if background
+    * icon is: TREE_ICON_SPRITE, TREE_ICON_TEXT or TREE_ICON_EXPAND
+  */
+  n = tree_find_node_at_coords(me, x, y, &icon);
+
+  DEBUG(DEBUGLEVEL, ("checked %d nodes in %d cs\n", FindNodeCount, clock() - t));
+
+  DEBUG(DEBUGLEVEL, ("mouse click: buttons %x  node: %p (%s)  icon %d\n", event->buttons, (void *)n, debug_node_text(n), icon));
+
+  /* menu click?	*/
+  if (event->buttons == Wimp_MouseButtonMenu) return menu_click(me, n);
+
+  if (event->buttons == 0x10 || event->buttons == 0x40) {
+    /* Drag with Select or Adjust		*/
+
+    if (n != NULL && me->flags & TreeView_AllowDrags) {
+      /* start drag of selected nodes	*/
+      EL(drag_start(me, n, event), e, fail);
+
+    } else if (n == NULL && me->flags & TreeView_AllowSelection) {
+      /* start dragbox to select nodes	*/
+      EL(dragbox_start(me, event), e, fail);
+    }
+
+    return -1;	// eat event by default, but it will be passed on if flag is set
+  } // end if (drag)
+
+
+  if (event->buttons == 0x1 || event->buttons == 0x4) {
+    /* Select or adjust double click	*/
+
+    if (n != NULL && me->flags & TreeView_DoubleClickExpands) {
+
+      /* expand from double click	*/
+      DEBUG(DEBUGLEVEL, ("double click -> expand\n"));
+      EL(tree_expand_node(me, n, -1, 1), e, fail);
+
+      //if (me->flags & TreeView_NotifyDoubleClick) {
+      //  /* Send event			*/
+      //  DEBUG(DEBUGLEVEL, ("double click -> deliver event\n"));
+      //  send_clicked_event(me, n);
+      //}
+
+    } else if (n == NULL && event->buttons == 0x4) {
+      /* Select double click on background - clear selection	*/
+      DEBUG(DEBUGLEVEL, ("mouse double click: no node\n"));
+      _delete_all_selection(me);
+    }
+
+    return -1;	// eat event by default, but it will be passed on if flag is set
+  } // end if (double click)
+
+
+  if (event->buttons == 0x100 || event->buttons == 0x400) {
+    /* Single click with select or adjust, on node or background	*/
+
+    if (icon == TREE_ICON_EXPAND) {
+      /* expand / collapse from click on the '+'	*/
+      EL(tree_expand_node(me, n, -1, 1), e, fail);
+
+    } else if (icon == TREE_ICON_TEXT && inkey(KEY_ALT)) {
+      /* ALT click on text - start rename	*/
+      DEBUG(DEBUGLEVEL, ("Alt click -> rename\n"));
+      EL(rename_start(me, n), e, fail);
+
+    } else if (me->flags & TreeView_AllowSelection) {
+      const int recurse = (me->flags & TreeView_SelectChildren) ? RECURSE : NO_RECURSE;
+      /* Click on sprite or text - select or deselect	*/
+
+      if (event->buttons == 0x400) {
+        /*
+         * select click - to mimic how the Filer behaves, we don't alter the
+         * selection if the click was over an already selected node
+        */
+        if (n != NULL) {
+          SelectionNode *s;
+          s = find_selection_node(me, n);	// is this node already selected?
+          if (s == NULL) {
+            _delete_all_selection(me);
+            _select_node(me, n, SELECT_SELECT, recurse);
+          }
+        } else {
+          /*
+           * Select click over no node means clear the current selection
+          */
+          _delete_all_selection(me);
+        }
+
+      } else if (event->buttons == 0x100) {
+        /* adjust click, toggle this node into selection	*/
+        if (n != NULL) {
+          _select_node(me, n, SELECT_TOGGLE, recurse);
+        }
+      }
+    }
+
+  } // endif (single click)
+
+  return -1;	// eat event by default, but it will be passed on if flag is set
+
+fail:
+  DEBUG(0, ("error in _mouse_click: %s\n", e->errmess));
+  return -1;
+}
+
+/*
+ * Handle a dragbox event - ie the user has dragged a box around some area
+ * of our window. If it's a select drag, clear any existing selection and select
+ * any nodes overlapped by the box. For an adjust drag, toggle the selection
+ * state of nodes overlapped by the box.
+*/
+static int wimp_event_dragbox(PrivateTreeView *me, WimpUserDragBoxEvent *event) {
+  BBox *box = &event->bbox;
+  TreeNode *n;
+  int mode = SELECT_SELECT;
+  int recurse = NO_RECURSE;
+
+  if (box->xmax < box->xmin) SWAP_INT(box->xmax, box->xmin);
+  if (box->ymax < box->ymin) SWAP_INT(box->ymax, box->ymin);
+
+  DEBUG(DEBUGLEVEL, ("wimp_event_dragbox: %d, %d > %d, %d\n", box->xmin, box->ymin, box->xmax, box->ymax));
+
+  /* We don't allow dragged boxes if this flag isn't set, but check anyway	*/
+  if ((me->flags & TreeView_AllowSelection) == 0) return -1;
+
+  if (DraggingButtons == 0x40) {
+    /* select drag - unselect all other nodes	*/
+    _delete_all_selection(me);
+  } else if (DraggingButtons == 0x10) {
+    mode = SELECT_TOGGLE;
+  }
+
+  if (me->flags & TreeView_SelectChildren) recurse = RECURSE;
+
+#if Debug_On
+  clock_t t = clock();
+#endif
+
+  FindNodeCount = 0;
+
+  n = me->root_node;
+  while (n != NULL) {
+    if ((n = tree_find_node_in_bbox(me, n, box)) != NULL) {
+      _select_node(me, n, mode, recurse);
+    }
+  }
+
+  DEBUG(DEBUGLEVEL, ("checked %d nodes in %d cs\n", FindNodeCount, clock() - t));
+
+  return -1;
+}
+
+
+static int wimp_event_scroll_request(PrivateTreeView *me, WimpScrollRequestEvent *scroll) {
+  WimpOpenWindowBlock *open = &scroll->open;
+  WimpGetPointerInfoBlock mouse;
+  int dx = 0, dy = 0, page;
+
+  me = _treeview_from_wimp_window(scroll->open.window_handle);
+  if (me == NULL) return 0;	// wasn't for us, pass on to client
+
+  wimp_get_pointer_info(&mouse);
+
+//  DEBUG(DEBUGLEVEL, ("scroll request: mouse: %d %d  window %d,%d %d,%d", mouse.x, mouse.y, open->visible_area.xmin, open->visible_area.ymin, open->visible_area.xmax, open->visible_area.ymax));
+
+  switch (ABS(scroll->yscroll)) {
+  case 3: // auto scroll
+    if (scroll->yscroll > 0) {
+      dy = (mouse.y - open->visible_area.ymax) / 2;
+      if (dy < 2) dy = 2;
+    } else {
+      dy = (mouse.y - open->visible_area.ymin) / 2;
+      if (dy > -2) dy = -2;
+    }
+    break;
+  case 2: // page
+    page = me->box.ymax - me->box.ymin;
+    dy = scroll->yscroll > 0 ? page : -page;
+    break;
+  case 1: // step
+    dy = scroll->yscroll > 0 ? 64 : -64;
+    break;
+  }
+
+  switch (ABS(scroll->xscroll)) {
+  case 3: // auto scroll
+    if (scroll->xscroll > 0) {
+      dx = (mouse.x - open->visible_area.xmax) / 2;
+      if (dx < 2) dx = 2;
+    } else {
+      dx = (mouse.x - open->visible_area.xmin) / 2;
+      if (dx > -2) dx = -2;
+    }
+    break;
+  case 2: // page
+    page = me->box.ymax - me->box.ymin;
+    dx = scroll->xscroll > 0 ? page : -page;
+    break;
+  case 1: // step
+    dx = scroll->xscroll > 0 ? 64 : -64;
+    break;
+  }
+
+  open->xscroll += dx;
+  open->yscroll += dy;
+
+  wimp_open_window(open);
+
+  /* Send event so the client can keep up to date with our scroll state	*/
+  send_scroll_event(me, open);
+
+  return -1;		// claim event
+}
+
+
+/* Not currently claimed	*/
+static int wimp_event_key_pressed(PrivateTreeView *me, WimpKeyPressedEvent *event) {
+  IGNORE(event);
+  IGNORE(me);
+
+  return 0;
+}
+
+
+_kernel_oserror *_show_all(void) {
+  int i;
+  for (i = 0; i < ListSize; i++) {
+    if (TreeViewList[i] != NULL) _show(TreeViewList[i]);
+  }
+  return NULL;
+}
+
+
+/* set the extent of our window and show it with toolbox_show_object	*/
+_kernel_oserror *_show(PrivateTreeView *me) {
+  _kernel_oserror  *e;
+  WindowShowObjectBlock show;
+  WimpGetWindowStateBlock parent_state, my_state;
+  int ip, have_vscroll, have_hscroll, want_vscroll, want_hscroll, parent_handle;
+  unsigned int nest_flags, new_flags;
+
+  if (VScrollSize == 0 || ScreenXEig == -1) {
+    find_tool_sizes(NULL, &VScrollSize, &HScrollSize);
+    find_screen_eigs(&ScreenXEig, &ScreenYEig);
+
+    VScrollSize -= (1 << ScreenXEig);	// sizes of pixels in OS units
+    HScrollSize -= (1 << ScreenYEig);
+  }
+
+  DEBUG(DEBUGLEVEL+1, ("\n_show: scrollbar size: %d %d  xeig: %d yeig: %d\n", VScrollSize, HScrollSize, ScreenXEig, ScreenYEig));
+
+  DEBUG(DEBUGLEVEL+1, ("gadget bbox: %d %d %d %d\n", me->box.xmin, me->box.ymin, me->box.xmax, me->box.ymax));
+
+  my_state.window_handle = me->wimp_object;
+  ER(wimp_get_window_state2(&my_state, &parent_handle, &nest_flags), e);
+
+  parent_state.window_handle = me->wimp_parent;
+  ER(wimp_get_window_state(&parent_state), e);
+
+  /* Account for scrollbar changes	*/
+  have_vscroll = (my_state.flags & WimpWindow_VScroll) != 0;
+  have_hscroll = (my_state.flags & WimpWindow_HScroll) != 0;
+  want_vscroll = (me->scrollbars & TreeView_HasVScroll) != 0;
+  want_hscroll = (me->scrollbars & TreeView_HasHScroll) != 0;
+
+  new_flags = my_state.flags;
+
+  if (have_vscroll && !want_vscroll) {
+    /* remove v scrollbar	*/
+    me->box.xmax += VScrollSize;
+    new_flags &= ~WimpWindow_VScroll;
+  } else if (!have_vscroll && want_vscroll) {
+    /* add v scrollbar	*/
+    me->box.xmax -= VScrollSize;
+    new_flags |= WimpWindow_VScroll;
+  }
+
+  if (have_hscroll && !want_hscroll) {
+    /* remove h scrollbar	*/
+    me->box.ymin -= HScrollSize;
+    new_flags &= ~WimpWindow_HScroll;
+  } else if (!have_hscroll && want_hscroll) {
+    /* add h scrollbar	*/
+    me->box.ymin += HScrollSize;
+    new_flags |= WimpWindow_HScroll;
+  }
+
+  if (new_flags != my_state.flags) {
+    my_state.flags = new_flags;
+    nest_flags |= 1;
+    ER(wimp_open_window2((WimpOpenWindowBlock *)&my_state, parent_handle, nest_flags),e);
+  }
+
+  ip = parent_state.visible_area.xmin - parent_state.xscroll;
+  show.visible_area.xmin = me->box.xmin + ip;
+  show.visible_area.xmax = me->box.xmax + ip;
+
+  ip = parent_state.visible_area.ymax - parent_state.yscroll;
+  show.visible_area.ymin = me->box.ymin + ip;
+  show.visible_area.ymax = me->box.ymax + ip;
+
+  DEBUG(DEBUGLEVEL+1, ("show bbox: %d %d %d %d\n", show.visible_area.xmin, show.visible_area.ymin,
+    show.visible_area.xmax, show.visible_area.ymax));
+
+  show.xscroll = my_state.xscroll;
+  show.yscroll = my_state.yscroll;
+
+  show.behind = -1;
+  show.window_flags = 0;
+  show.parent_window_handle = me->wimp_parent;
+  show.alignment_flags = 0;
+
+  ER(toolbox_show_object(Toolbox_ShowObject_AsSubWindow, me->object_id,
+    Toolbox_ShowObject_FullSpec, &show, me->parent_id, -1), e);
+
+  DEBUG(DEBUGLEVEL+1, ("done\n\n"));
+  return NULL;
+}
+
+
+/*
+   This routine handles the filters we have installed (via the toolbox)
+   on various events and messages. Our gadget is a nested wimp window, so the
+   client app will get events referring to this window's handle. We look up which
+   gadget the event refers to based on the wimp handle and then take appropriate
+   action.
+
+   entry conditions:
+   r0 =  event code
+   r1 -> event block
+   r2    undefined ?
+   r3 -> id block for the event
+
+   exit conditions:
+   r0 = 0 if we haven't done anything
+        1 if we have upated the IdBlock
+       -1 to claim the event so client app doesn't see it
+*/
+int _filter(_kernel_swi_regs *regs) {
+  _kernel_oserror *e;
+  ToolboxEvent	*event		= (ToolboxEvent *)regs->r[1];
+  IdBlock	*id_block	= (IdBlock *)regs->r[3];
+  int		event_code	= regs->r[0];
+  PrivateTreeView *me;
+  int claim;
+
+  DEBUG(DEBUGLEVEL+1, ("\ntreeview_filter: event_code = %d (%s)\n", event_code,
+    event_code == 0x200 ? "Wimp_EToolboxEvent" :
+    (event_code < DEBUG_EVENT_CODE_MAX ? Debug_Event_Codes[event_code] : "?")
+  ));
+  DEBUG(DEBUGLEVEL+1, ("id_block: self_id %08x  self_component: %08x\n", id_block->self_id, id_block->self_component));
+  DEBUG(DEBUGLEVEL+1, ("          parent_id %08x  ancestor_id: %08x\n", id_block->parent_id, id_block->ancestor_id));
+
+  if (event_code == Wimp_EMouseClick) {
+    WimpMouseClickEvent *mouse = (WimpMouseClickEvent *)event;
+
+    me = _treeview_from_wimp_window(mouse->window_handle);
+    if (me == NULL) return 0;	// wasn't for us, pass on to client
+
+    claim = wimp_event_mouse_click(me, mouse, id_block);
+    if (me->flags & TreeView_AllEvents) return 1;
+    return claim;
+
+
+  } else if (event_code == Wimp_EKeyPressed) {
+    WimpKeyPressedEvent *key = (WimpKeyPressedEvent *)event;
+
+    me = _treeview_from_wimp_window(key->caret.window_handle);
+    if (me == NULL) return 0;	// wasn't for us, pass on to client
+
+    /* alter id block so client sees the key press in the correct gadget	*/
+    id_block->self_id = me->parent_id;
+    id_block->self_component = me->component_id;
+    claim = wimp_event_key_pressed(me, key);
+
+    if (me->flags & TreeView_AllEvents) return 1;
+    return claim;
+
+
+  } else if (event_code == Wimp_ERedrawWindow) {
+    WimpRedrawWindowRequestEvent *redraw = (WimpRedrawWindowRequestEvent *)event;
+
+    me = _treeview_from_wimp_window(redraw->window_handle);
+    if (me == NULL) return 0;	// wasn't for us, pass on to client
+
+    /* redraw our gadget	*/
+    wimp_event_redraw(me, redraw);
+
+    /* The client doesn't want to redraw this window, so claim event	*/
+    return -1;
+
+  } else if (event_code == Wimp_EUserDrag) {
+    WimpUserDragBoxEvent *drag = (WimpUserDragBoxEvent *)event;
+    /*
+     * a drag that the application has started has ended. If we initiated the drag
+     * we need to have remembered the fact and then filter the event so the app
+     * doesn't get this event for a drag it knows nothing about.
+    */
+
+    if (DraggingTreeView != NULL) {
+      me = DraggingTreeView;
+      claim = -1;
+
+      DEBUG(DEBUGLEVEL, ("Drag end %p\n", (void *)DraggingTreeView));
+
+      if (DraggingNode != NULL) {
+        /* We are dragging a selection of nodes	*/
+
+        DEBUG(DEBUGLEVEL, ("selection\n"));
+
+        EL(_swix(DragASprite_Stop, 0), e, fail);
+
+        if (DraggingTreeView->flags & TreeView_NotifyDragEnd) {
+          send_drag_event(DraggingTreeView, DraggingNode, DraggingNodeCount);
+        }
+
+      } else {
+        /* Dragging a box to select / deselect some nodes	*/
+
+        EL(convert_bbox_screen_to_work(me, &drag->bbox), e, fail);
+
+        EL(_swix(Wimp_AutoScroll, _IN(0), 0), e, fail);	// stop
+
+        claim = wimp_event_dragbox(me, drag);
+      } // end if (DraggingNode)
+
+    } else {
+      /* Not our drag		*/
+      claim = 0;
+    } // end if (was it our drag)
+
+    DraggingTreeView = NULL;
+    DraggingNode = NULL;
+
+    return claim;
+
+  /* Data transfer protocol handler
+  } else if (event_code == Wimp_EUserMessage || event_code == Wimp_EUserMessageRecorded){
+    return treeview_message_filter((WimpMessage *)regs->r[1], id_block);
+  */
+
+  } else if (event_code == Wimp_EScrollRequest) {
+    WimpScrollRequestEvent *scroll = (WimpScrollRequestEvent *)event;
+
+    me = _treeview_from_wimp_window(scroll->open.window_handle);
+    if (me == NULL) return 0;	// wasn't for us, pass on to client
+
+    return wimp_event_scroll_request(me, (WimpScrollRequestEvent *)event);
+
+  } else if (event_code == Wimp_EOpenWindow) {
+    WimpOpenWindowBlock *open = (WimpOpenWindowBlock *)event;
+
+    me = _treeview_from_wimp_window(open->window_handle);
+    if (me == NULL) return 0;	// wasn't for us, pass on to client
+
+//    DEBUG(DEBUGLEVEL, ("open window: %d %d\n", open->xscroll, open->yscroll));
+
+    return -1;
+
+  } else if (event_code == Wimp_EToolboxEvent) {
+    /* toolbox event filter handlers	*/
+
+  } // end if (event_code)
+
+
+  return 0;
+
+fail:
+  DEBUG(0, ("error in filter: %s\n", e->errmess));
+  return -1;
+}

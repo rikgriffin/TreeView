@@ -1,0 +1,438 @@
+/* TreeView.Main.c		*/
+/* Rik Griffin Oct 2003		*/
+
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+
+#define _main_c
+#include "Main.h"
+#include "Version.h"
+#include "RMEnsure.h"
+
+
+#define DEBUGLEVEL	0
+
+
+#if Debug_On
+char *debug_node_text(TreeNode *node) {
+  if (node == NULL) return "NULL";
+  if (node->text == NULL) return "[none]";
+  return node->text;
+}
+
+
+char *debug_node_sprite(TreeNode *node) {
+  if (node == NULL) return "NULL";
+  if (node->expand_child && node->child != NULL) return node->sprite_ex;
+  return node->sprite;
+}
+
+static char *debug_method(int m) {
+  switch (m) {
+    case 0 : return "unknown (0)";
+    case 1 : return "GADGET_ADD";
+    case 2 : return "GADGET_REMOVE";
+    case 3 : return "GADGET_FADE";
+    case 4 : return "GADGET_METHOD";
+    case 5 : return "unknown (5)";
+    case 6 : return "GADGET_MCLICK";
+    case 7 : return "unknown (7)";
+    case 8 : return "unknown (8)";
+    case 9 : return "GADGET_PLOT";
+    case 10 : return "GADGET_SETFOCUS";
+    case 11 : return "GADGET_MOVE";
+    case 12 : return "GADGET_POSTADD";
+    default : return "unknown";
+  }
+}
+#endif
+
+
+/* These are the Toolbox events we install Post Filters for	*/
+/*
+int Filter_ToolboxEvents[] = {
+    -1
+};
+*/
+
+
+/* These are the Wimp events we install Post Filters for	*/
+int Filter_WimpEvents[] = {
+    Wimp_ERedrawWindow, 0,
+    Wimp_EMouseClick, 0,
+    Wimp_EUserDrag, 0,
+    Wimp_EScrollRequest, 0,
+    -1
+};
+
+/* These are the Wimp Messages we install Post Filters for	*/
+/*
+int Filter_WimpMessages[] = {
+  -1
+};
+*/
+
+
+/* This is where we register our gadget types with the toolbox	*/
+static _kernel_oserror *register_gadgets(void) {
+  _kernel_oserror *e;
+  FeatureMask features;
+
+  /* Do this once for each gadget type we provide	*/
+
+  features.mask = 0;
+  features.bits.add	= PRIVATE_HANDLER;
+  features.bits.remove	= PRIVATE_HANDLER;
+  features.bits.postadd	= NO_HANDLER;
+  features.bits.method	= PRIVATE_HANDLER;
+  features.bits.tbevent	= NO_HANDLER;
+  features.bits.mclick	= NO_HANDLER;
+  features.bits.kpress	= NO_HANDLER;
+  features.bits.message	= NO_HANDLER;
+  features.bits.plot	= PRIVATE_HANDLER;
+  features.bits.setfocus= NO_HANDLER;
+  features.bits.move	= PRIVATE_HANDLER;
+  features.bits.fade	= NO_HANDLER;
+  features.bits.windowappearing = NO_HANDLER;
+  features.bits.mscroll	= NO_HANDLER;
+  features.bits.lostfocus= NO_HANDLER;
+
+  ER(register_gadget_type(0, TreeView_Type, TreeViewValidFlags, features.mask,
+    TreeView_TreeView), e);
+
+  return NULL;
+}
+
+
+static _kernel_oserror *module_error(char *mod, char *ver) {
+  sprintf(GlobalError.errmess, "TreeView gadget requires %s version %s, and this cannot be loaded. Quit any running Toolbox applications and try again.", mod, ver);
+  GlobalError.errnum = 0;
+  return &GlobalError;
+}
+
+
+static _kernel_oserror *ensure_toolbox_mod(char *mod, char *ver) {
+  char path[256];
+
+  sprintf(path, "Toolbox.%s", mod);
+  return rmensure(mod, path, ver);
+}
+
+
+_kernel_oserror *initialise(const char *cmd_tail, int podule, void *pw) {
+  _kernel_oserror *e;
+
+  IGNORE(cmd_tail);
+  IGNORE(podule);
+  IGNORE(pw);
+
+  #if Debug_On
+  {
+    FILE *f;
+    if ((f = fopen("TreeView:Debug", "w+")) != NULL) fclose(f);
+  }
+  #endif
+
+  ER(rmcheck("WindowManager", "3.98"), e);
+
+/*
+  if (ensure_toolbox_mod("Toolbox", "1.63") != NULL) {
+    return module_error("Toolbox", "1.63");
+  }
+  if (ensure_toolbox_mod("Window", "1.62") != NULL) {
+    return module_error("Window", "1.62");
+  }
+*/
+  if (ensure_toolbox_mod("Toolbox", "0.00") != NULL) {
+    return module_error("Toolbox", "0.00");
+  }
+  if (ensure_toolbox_mod("Window", "0.00") != NULL) {
+    return module_error("Window", "0.00");
+  }
+
+  if (ensure_toolbox_mod("Toolbox", "1.54") == NULL) {
+    DEBUG(DEBUGLEVEL, ("Using new toolbox\n"));
+  }
+
+  ER(register_gadgets(), e);
+
+  DEBUG(DEBUGLEVEL, ("Registered TreeView gadget type: %08x  toolbox swi: %x\n", TreeView_Type,
+    TreeView_TreeView));
+
+  /* initialise the embdded sprite area	*/
+  Sprites = (SpriteArea *)Sprites_c;
+  DEBUG(DEBUGLEVEL, ("Sprite area size %d\n", Sprites->size));
+
+  /* create the redraw tree structure	*/
+  ER(_plot_init(), e);
+
+  return NULL;
+
+}
+
+
+_kernel_oserror *finalise(int fatal, int podule, void *pw) {
+
+  IGNORE(fatal);
+  IGNORE(podule);
+  IGNORE(pw);
+
+  deregister_gadget_type(0, TreeView_Type, TreeView_TreeView);
+  if (TreeViewList != NULL) {
+    _mem_free(TreeViewList);
+    TreeViewList = NULL;
+  }
+
+  return NULL;
+}
+
+
+_kernel_oserror *swi_handler(int swi_no, _kernel_swi_regs *r, void *pw) {
+  _kernel_oserror *e = NULL;
+
+  IGNORE(pw);
+
+  DEBUG(2, ("\nSWI: %d\n", swi_no));
+  switch (swi_no + TreeView_00) {
+
+    case TreeView_TreeView :
+      /* method code is in r[2]		*/
+      DEBUG(2, ("TreeView_TreeView called with method code %d %s\n", r->r[2], debug_method(r->r[2])));
+
+      switch (r->r[2]) {
+        case GADGET_ADD:
+          DEBUG(2, ("Create gadget type %x parent %x window handle %x\n", r->r[1], r->r[4], r->r[5]));
+
+          e = gadget_add((TreeView *)r->r[3], r->r[4], r->r[5], &(r->r[0]), (int **)&(r->r[1]));
+
+          break;
+
+        case GADGET_MCLICK:
+
+          break;
+
+        case GADGET_METHOD:
+          e = gadget_method((PrivateTreeView *) r->r[3],(_kernel_swi_regs *)(r->r[4]));
+          break;
+
+        case GADGET_REMOVE:
+          e = gadget_remove(r->r[0], (PrivateTreeView *)r->r[3]);
+          break;
+
+        case GADGET_FADE:
+/*
+          e = treeview_fade((PrivateTreeView *) r->r[3],r->r[4]);
+*/
+          break;
+
+        case GADGET_PLOT:
+          e = gadget_plot((TreeView *)r->r[3]);
+          break;
+
+        case GADGET_MOVE:
+          e = gadget_move((PrivateTreeView *) r->r[3], (BBox *) r->r[5]);
+          break;
+
+        case GADGET_SETFOCUS:
+/*
+          e = treeview_set_focus((int)r->r[0], (PrivateTreeView *) r->r[3]);
+*/
+          break;
+      }	// end switch(r->r[2])
+
+      break;
+
+    case TreeView_Filter:
+      r->r[0] = _filter(r);
+      DEBUG(2, ("Returning %d from filter\n", r->r[0]));
+      break;
+
+  }	// end switch(swi_no)
+
+  if (e != NULL) {
+    DEBUG(2, ("SWI call returning error: %s\n", e->errmess));
+  }
+  return e;
+}
+
+
+void service_handler(int number, _kernel_swi_regs *r, void *pw) {
+  IGNORE(pw);
+  IGNORE(r);
+
+  switch (number) {
+    case Service_WindowModuleStarting:
+      register_gadgets();
+      break;
+
+  case Service_RedrawingWindow:
+    RedrawingWindow = r->r[0];
+    break;
+
+  case Service_ModeChange:
+    service_mode_change();
+    break;
+
+  }
+}
+
+
+void service_mode_change(void) {
+  VScrollSize = 0;
+  HScrollSize = 0;
+  ScreenXEig = -1;
+  ScreenYEig = -1;
+  _show_all();
+}
+
+
+void find_screen_eigs(unsigned int *xeig, unsigned int *yeig) {
+  unsigned int block[4];
+
+  block[0] = 4;
+  block[1] = 5;
+  block[2] = -1;
+  if (_swix(OS_ReadVduVariables, _INR(0,1), block, block) == NULL) {
+    if (xeig != NULL) *xeig = block[0];
+    if (yeig != NULL) *yeig = block[1];
+  }
+}
+
+static WimpWindow ToolsWindow = {
+        // WimpWindow struct
+        { 0, 0, 0, 0 },		// visible_area
+        0,				// xscroll
+        0,				// yscroll
+        -1,				// behind
+        WimpWindow_NewFormat  	 	// flags
+        | WimpWindow_NoBounds
+        | WimpWindow_VScroll
+        | WimpWindow_HScroll
+        | WimpWindow_TitleIcon
+//        | WimpWindow_AutoRedraw
+        ,
+        7,				// title_fg
+        2,				// title_bg
+        7,				// work_fg
+        0xff,				// work_bg
+        3,				// scroll_outer
+        1,				// scroll_inner
+        12,				// highlight_by
+        0,				// reserved
+        {0, (int)0x80000000, 0x7fffffff, 0},	// extent
+        0,				// title_flags
+        3 * WimpIcon_ButtonType,	// work_flags
+        0,				// sprite_area (1 = wimp)
+        1,				// min_width
+        1,				// min_height
+        {
+            // WimpIconData for title bar
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        },
+        0			// number of icons
+};
+
+
+/* works out the size of a window title bar and scroll bars	*/
+void find_tool_sizes(unsigned int *title, unsigned int *vscroll, unsigned int *hscroll) {
+  _kernel_oserror *e;
+  WimpGetWindowOutlineBlock outline;
+  unsigned int ts, vs, hs;
+  int handle = 0;
+
+  if (title == NULL && vscroll == NULL && hscroll == NULL) return;
+
+  vs = hs = ts = 42;
+
+  EL(wimp_create_window(&ToolsWindow, &handle), e, fail);
+  DEBUG(DEBUGLEVEL, ("find_tool_sizes: created window handle %x\n", handle));
+
+/*
+  block[0] = handle;
+  block[2] = 0;
+  block[3] = 0;
+  block[4] = 0;
+
+  EL(_swix(Wimp_Extend, _INR(0,1), 11, &block), e, fail);
+
+  hs = block[2];
+  vs = block[3];
+  ts = block[4];
+
+  DEBUG(0, ("tool sizes: %d %d %d\n", hs, vs, ts));
+*/
+
+  outline.window_handle = handle;
+  EL(wimp_get_window_outline(&outline), e, fail);
+
+  DEBUG(DEBUGLEVEL, ("  outline bbox: %d %d %d %d\n", outline.outline.xmin, outline.outline.ymin, outline.outline.xmax, outline.outline.ymax));
+
+  ts = outline.outline.ymax;
+  vs = outline.outline.xmax;
+  hs = -outline.outline.ymin;
+  DEBUG(DEBUGLEVEL, ("  tool sizes: %d %d %d\n", hs, vs, ts));
+
+
+fail:
+  if (e != NULL) DEBUG(0, ("error: %s\n", e->errmess));
+  if (title != NULL)   *title   = ts;
+  if (vscroll != NULL) *vscroll = vs;
+  if (hscroll != NULL) *hscroll = hs;
+  if (handle != 0) {
+    if ((e = wimp_delete_window((WimpDeleteWindowBlock *)&handle)) == NULL) {
+      DEBUG(DEBUGLEVEL, ("  deleted tool size window\n"));
+    } else {
+      DEBUG(0, ("error: %s\n", e->errmess));
+    }
+  }
+}
+
+
+/* works out the size of a window title bar and scroll bars	*/
+/*
+void old_find_tool_sizes(unsigned int *title, unsigned int *vscroll, unsigned int *hscroll) {
+  unsigned int block[26];
+
+  if (title == NULL && vscroll == NULL && hscroll == NULL) return;
+
+  block[0] = 0;
+  if (_swix(Wimp_Extend, _INR(0,1), 11, &block) == NULL) {
+    if (title != NULL)   *title   = block[4] + 2;
+    if (vscroll != NULL) *vscroll = block[3] + 2;
+    if (hscroll != NULL) *hscroll = block[2] + 2;
+  }
+
+}
+*/
+
+
+unsigned int faded_background_colour(unsigned int fore, unsigned int back) {
+  unsigned int r, g, b;
+  IGNORE(fore);
+
+  b = ((back >> 24) & 0xff) + 0x20;
+  if (b > 0xff) b = 0xff;
+
+  g = ((back >> 16) & 0xff) + 0x20;
+  if (g > 0xff) g = 0xff;
+
+  r = ((back >> 8) & 0xff) + 0x20;
+  if (r > 0xff) r = 0xff;
+
+  return ((b << 24) | (g << 16) | (r << 8));
+}
+
+
+int inkey(int key_code) {
+  int p;
+
+  key_code |= 0x80;
+
+  if (_swix(OS_Byte, _INR(0,1) | _OUT(1), 121, key_code, &p) == NULL) {
+    if (p) return 1;
+  }
+
+  return 0;
+}

@@ -1,0 +1,6 @@
+/* Harness.Init.h		*/
+/* © Rik Griffin Mar 2000	*/
+
+extern _kernel_oserror *register_events(void);
+extern _kernel_oserror *make_objects(void);
+extern _kernel_oserror *initialise(void);

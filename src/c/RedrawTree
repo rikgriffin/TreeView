@@ -1,0 +1,516 @@
+/* TreeView:RedrawTree.c	*/
+/* Rik Griffin Nov 2003		*/
+
+#include <string.h>
+#include <limits.h>
+
+#include "Main.h"
+#include "Redraw.h"
+
+
+#define DEBUGLEVEL	3
+
+
+/*
+ * if the node has either a sibling or a parent, draw horizontal
+ * line left of the sprite and vertical line upwards to the sibling
+*/
+static void plot_lines(PrivateTreeView *me, TreeNode *n, int xbase, int ybase) {
+  int x, y;
+
+  _swix(Wimp_SetColour, _IN(0), me->linecolour_wimp);
+
+  /*
+   * Draw horizontal line left from the node to meet the vertical line
+   * only if there's no expand icon
+  */
+  if (n->expand_icon.flags == 0) {
+    x = xbase + n->obox.xmin - 2;
+    y = ybase + n->obox.ymin + n->height / 2;
+    _swix(OS_Plot, _INR(0,2), PLOT_MOVE, x, y);
+  }
+
+  y = ybase + n->obox.ymin + n->height / 2;
+  if (y < -0x3fff) {
+    y = -0x3fff;
+  } else if (y > 0x3fff) {
+    y = 0x3fff;
+  }
+
+  x = xbase + n->obox.xmin - 2 - EXPAND_ICON_XSIZE / 2;
+  if (x < -0x3fff || x > 0x3fff) return;
+
+  /*
+   * No line if there's an expand icon. And adjust the min x coordinate
+   * so that the vertical line starts from the right place.
+  */
+  if (n->expand_icon.flags != 0) {
+    _swix(OS_Plot, _INR(0,2), PLOT_MOVE, x + EXPAND_ICON_XSIZE, y);
+  } else {
+    _swix(OS_Plot, _INR(0,2), PLOT_LINE | PLOT_DRAW, x, y);
+  }
+
+  if (n->sorted.prev != NULL) {
+    /* draw vertical line to sorted sibling	*/
+
+    int extra = 0;
+
+    /*
+     * if the node before us has no expand icon, modify the length
+     * of the vertical line to draw
+    */
+    if (n->sorted.prev->expand_icon.flags == 0) {
+      extra = n->sorted.prev->height / 2;
+    }
+
+    y = (n->sorted.prev->obox.ymin + extra) - (n->obox.ymin + n->height / 2);
+    _swix(OS_Plot, _INR(0,2), PLOT_LINE | PLOT_DRAW_RELATIVE, 0, y);
+
+
+  } else if (n->parent != me->root_node && n->parent != n) {
+    /* draw vertical line to parent (except to the root)	*/
+
+    y = (n->parent->obox.ymin - 4) - (n->obox.ymin + n->height / 2);
+    _swix(OS_Plot, _INR(0,2), PLOT_LINE | PLOT_DRAW_RELATIVE, 0, y);
+
+  }
+}
+
+
+/* Called with the parent node of the part of the tree to draw	*/
+/* IE the root node for the first call.				*/
+void plot_node_tree(WimpRedrawWindowBlock *block, PrivateTreeView *me, TreeNode *parent) {
+  _kernel_oserror *e;
+  TreeNode *n;//, *last_plotted = NULL;
+  int xbase, ybase, xsize, ysize;
+//  BBox *prev_check_box;
+
+  if (parent->sorted.child == NULL) return;
+
+  xbase = block->visible_area.xmin - block->xscroll;
+  ybase = block->visible_area.ymax - block->yscroll;
+  xsize = block->visible_area.xmax - block->visible_area.xmin;
+  ysize = block->visible_area.ymax - block->visible_area.ymin;
+
+  for (n = parent->sorted.child; n != NULL; n = n->sorted.next) {
+
+    /* is node above the visible area?	*/
+    if (n->obox.ymin > block->yscroll) goto skip;
+
+    /*
+     * is node below the visible area? Even if it is, we plot it if it
+     * has a previous sibling so the lines are shown
+    */
+    if (n->obox.ymax < block->yscroll - ysize) {
+      if (n->sorted.prev == NULL) goto skip;
+      if (n->sorted.prev->obox.ymax < block->yscroll - ysize) goto skip;
+//      if (n->sorted.prev != last_plotted) goto skip;
+
+//    } else {
+//      last_plotted = n;
+    }
+
+    if (me->flags & TreeView_PlotLines) plot_lines(me, n, xbase, ybase);
+
+    DEBUG(DEBUGLEVEL, ("plot node %p (%s) %s ", (void *)n, debug_node_text(n), debug_node_sprite(n)));
+
+    if (n->icon.flags != 0) {
+      if ((e = wimp_plot_icon(&n->icon)) != NULL) {
+        DEBUG(0, ("error from Wimp_PlotIcon: %s\n", e->errmess));
+      } else {
+        DEBUG(DEBUGLEVEL, ("done\n"));
+      }
+    }
+
+    if (n->text_icon.flags != 0) {
+      if ((e = wimp_plot_icon(&n->text_icon)) != NULL) {
+        DEBUG(0, ("error from Wimp_PlotIcon: %s\n", e->errmess));
+      } else {
+        DEBUG(DEBUGLEVEL, ("text icon done\n"));
+      }
+    }
+
+    if ((me->flags & TreeView_AllowExpand) && n->child != NULL) {
+      DEBUG(DEBUGLEVEL, ("plotting expand_icon: '%s' ",n->expand_icon.data.is.sprite));
+      if ((e = wimp_plot_icon(&n->expand_icon)) != NULL) {
+        DEBUG(0, ("error from Wimp_PlotIcon: %s\n", e->errmess));
+      } else {
+        DEBUG(DEBUGLEVEL, ("done\n"));
+      }
+    }
+
+skip:
+//    DEBUG(0, ("\n"));
+    /* Recursion may not be such a good idea in SVC mode		*/
+    if (n->child != NULL && n->expand_child != 0) {
+      plot_node_tree(block, me, n);
+    }
+
+  } // end for (node)
+}
+
+
+/* y passed in is the top coordinate of the new icon	*/
+static void make_text_icon(PrivateTreeView *me, TreeNode *n) {
+//  _kernel_oserror *e;
+  int textx, texty, font, len;
+  int block[10];
+  char *text;
+
+  if (n->text == NULL) text = "";
+  else text = n->text;
+
+  n->text_icon.flags = 0
+        | WimpIcon_Text
+        | WimpIcon_VCentred
+        | WimpIcon_Indirected
+        | (me->foreground_wimp * WimpIcon_FGColour)
+        | (me->background_wimp * WimpIcon_BGColour)
+        | WimpIcon_Filled
+        ;
+
+
+  if (me->current_node == n && me->flags & TreeView_ShowCurrentNode) {
+    n->text_icon.flags |= WimpIcon_Border;
+  }
+
+  /* calculate the text bbox properly	*/
+  len = strlen(text);
+
+  DEBUG(DEBUGLEVEL, ("building text icon for node %p (%s) %p %d\n", (void *)n, debug_node_text(n), (void *)n->text, len));
+
+  _swix(Wimp_ReadSysInfo, _IN(0) | _OUT(0), 8, &font);
+
+  if (font == 0) {
+    /* system font	*/
+    textx = len * 16 + 16;
+    texty = 44;
+  } else {
+    int w;
+
+    block[0] = 0;
+    block[1] = 0;
+    block[2] = 0;
+    block[3] = 0;
+    block[4] = -1;
+
+    _swix(Font_ScanString, _INR(0,7),
+      font, text, (1<<5) | (1<<7) | (1<<8) | (1<<9) | (1<<18), INT_MAX, INT_MAX,
+      block, NULL, len);
+
+    _swix(Wimp_TextOp, _INR(0,2) | _OUT(0), 1, text, 0, &w);
+
+    textx = ((block[7] - block[5]) / 400) + 20;	// allow for icon border
+    texty = ((block[8] - block[6]) / 400) + 8;
+    DEBUG(DEBUGLEVEL, ("string bbox: %d %d %d %d  = %d x %d (Wimp_TextOp = %d)\n", block[5], block[6], block[7], block[8], textx, texty, w));
+  }
+
+  n->text_icon.bbox.xmin = 0;
+  n->text_icon.bbox.xmax = textx;
+  n->text_icon.bbox.ymin = 0;
+  n->text_icon.bbox.ymax = texty;
+
+  DEBUG(DEBUGLEVEL, ("text bbox: %d %d %d %d\n", n->text_icon.bbox.xmin, n->text_icon.bbox.ymin, n->text_icon.bbox.xmax, n->text_icon.bbox.ymax));
+
+  n->text_icon.data.it.buffer = text;
+  n->text_icon.data.it.validation = "";
+  n->text_icon.data.it.buffer_size = 1;	// len ?
+}
+
+
+/* y passed in is the top coordinate of the new icon	*/
+/* returns the y coordinate of the bottom of the icon	*/
+static void make_sprite_icon(PrivateTreeView *me, TreeNode *n) {
+  _kernel_oserror *e = NULL;
+  int sprx = 0, spry = 0, sprxeig = 0, spryeig = 0;
+  char *sprite;
+  SpriteArea *area;
+  SpriteCtrlBlock *spr;
+
+  n->icon.flags = 0
+        | WimpIcon_Sprite
+        | WimpIcon_HCentred
+        | WimpIcon_VCentred
+        | WimpIcon_Indirected
+        | (me->foreground_wimp * WimpIcon_FGColour)
+        | (me->background_wimp * WimpIcon_BGColour)
+        ;
+
+
+  if (me->current_node == n && me->flags & TreeView_ShowCurrentNode) {
+    n->icon.flags |= WimpIcon_Border;
+  }
+
+  if (n->expand_child && n->child != NULL && n->sprite_ex[0] != '\0') {
+    sprite = n->sprite_ex;
+  } else {
+    sprite = n->sprite;
+  }
+
+  DEBUG(DEBUGLEVEL, ("building sprite icon for node %p (%s) sprite '%s'\n", (void *)n, debug_node_text(n), sprite));
+
+  /* find the sprite area and ctrl block ptrs of the source sprite	*/
+  /* The sprite may not exist, which is OK				*/
+  if ((int) n->sprite_area == 1) {
+    e = rikslib_find_wimp_sprite(sprite, &area, &spr);
+    DEBUG(DEBUGLEVEL, ("Sprite is in wimp area\n"));
+  } else {
+    area = n->sprite_area;
+    e = _swix(OS_SpriteOp, _INR(0,2) | _OUT(2), 0x118, area, sprite, &spr);
+    DEBUG(DEBUGLEVEL, ("Sprite is in user area %p\n", (void *)area));
+  }
+  if (e != NULL) {
+    area = NULL;
+    spr = NULL;
+  }
+
+  if (area != NULL && spr != NULL) {
+    if ((e = rikslib_sprite_eig_factors(spr, &sprxeig, &spryeig)) != NULL) {
+      DEBUG(0, ("error from OS_SpriteOp: %s\n", e->errmess));
+    } else {
+      DEBUG(DEBUGLEVEL, ("Sprite eigen values: %d %d\n", sprxeig, spryeig));
+    }
+    if ((e = _swix(OS_SpriteOp, _INR(0,2)|_OUTR(3,4), 0x228, area, spr, &sprx, &spry))
+    != NULL) {
+      DEBUG(0, ("error from OS_SpriteOp: %s\n", e->errmess));
+    }
+    sprx <<= sprxeig;
+    spry <<= spryeig;
+    DEBUG(DEBUGLEVEL, ("sprite '%s' size %d x %d\n", sprite, sprx, spry));
+  }
+
+  if (area == NULL && spr == NULL || e != NULL) {
+    n->icon.flags = 0;
+    n->icon.bbox.xmin = INT_MAX;
+    n->icon.bbox.ymin = -1;
+    n->icon.bbox.xmax = INT_MAX;
+    n->icon.bbox.ymax = -1;
+    return;
+  }
+
+  n->icon.bbox.xmin = 0;
+  n->icon.bbox.xmax = sprx;
+  n->icon.bbox.ymin = 0;
+  n->icon.bbox.ymax = spry;
+
+  n->icon.data.is.sprite = sprite;
+  n->icon.data.is.sprite_area = n->sprite_area;
+  n->icon.data.is.sprite_name_length = 1;
+
+  DEBUG(DEBUGLEVEL, ("sprite bbox: %d %d %d %d\n", n->icon.bbox.xmin,
+    n->icon.bbox.ymin, n->icon.bbox.xmax, n->icon.bbox.ymax));
+}
+
+
+/* y passed in is the top coordinate of the new icon	*/
+static void make_expand_icon(PrivateTreeView *me, TreeNode *n) {
+  n->expand_icon.flags = 0
+      | WimpIcon_Sprite
+//      | WimpIcon_Border
+      | WimpIcon_HCentred
+      | WimpIcon_VCentred
+      | WimpIcon_Indirected
+      | (me->foreground_wimp * WimpIcon_FGColour)
+      | (me->background_wimp * WimpIcon_BGColour)
+//      | WimpIcon_Filled
+        ;
+
+  if (n->expand_child == 0) {
+    n->expand_icon.data.is.sprite = "plus";
+  } else {
+    n->expand_icon.data.is.sprite = "minus";
+  }
+  n->expand_icon.data.is.sprite_area = Sprites;
+  n->expand_icon.data.is.sprite_name_length = 1;
+}
+
+
+/* Text below sprite	*/
+static int layout_icon_tree_1(PrivateTreeView *me, TreeNode *n, int x, int y,
+int branch_expanded, int *r_xmax) {
+  int width, height;
+
+  width = MAX(n->icon.bbox.xmax, n->text_icon.bbox.xmax);
+  height = n->icon.bbox.ymax + n->text_icon.bbox.ymax;
+  y -= me->vertical_spacing;
+
+  if (me->flags & TreeView_AllowExpand) {
+    /* position expand icon (if present) */
+    if (branch_expanded && n->child != NULL) {
+      int a, b;
+
+      if (n->icon.flags != 0) b = n->icon.bbox.ymax;
+      else b = n->text_icon.bbox.ymax;
+
+      n->expand_icon.bbox.xmin = x;
+      n->expand_icon.bbox.xmax = x + EXPAND_ICON_XSIZE;
+
+      a = (b - EXPAND_ICON_YSIZE) / 2;
+      n->expand_icon.bbox.ymin = y - b + a;
+      n->expand_icon.bbox.ymax = n->expand_icon.bbox.ymin + EXPAND_ICON_YSIZE;
+    }
+
+    x += EXPAND_ICON_XSIZE;
+  }
+
+  /* position sprite icon (if present)	*/
+  if (n->icon.flags != 0) {
+    int size = n->icon.bbox.ymax;
+
+    n->icon.bbox.xmin = x + 8;
+    n->icon.bbox.xmax += n->icon.bbox.xmin;
+    n->icon.bbox.ymin = y - n->icon.bbox.ymax;
+    n->icon.bbox.ymax = y;
+
+    y -= size + Y_GAP;
+  }
+
+  /* position text icon (if present)	*/
+  if (n->text_icon.flags != 0) {
+    int ysize = n->text_icon.bbox.ymax;
+
+    n->text_icon.bbox.xmin = x;
+    n->text_icon.bbox.xmax += n->text_icon.bbox.xmin;
+    n->text_icon.bbox.ymin = y - n->text_icon.bbox.ymax;
+    n->text_icon.bbox.ymax = y;
+
+    y -= ysize;
+  }
+
+  /* calculate overall bounding box for this node's icons	*/
+  calc_overall_bbox(n);
+
+  /* calculate proper new x,y coordinates from the node size	*/
+  x += n->width;
+
+  if (*r_xmax < x) *r_xmax = x;
+
+  return y;
+}
+
+
+/* Text beside sprite	*/
+static int layout_icon_tree_2(PrivateTreeView *me, TreeNode *n, int x, int y,
+int branch_expanded, int *r_xmax) {
+  int height;
+
+//  n->width = n->icon.bbox.xmax + n->text_icon.bbox.xmax;
+  height = MAX(n->icon.bbox.ymax, n->text_icon.bbox.ymax);
+  y -= me->vertical_spacing;
+
+  if (me->flags & TreeView_AllowExpand) {
+    /* position expand icon (if present) */
+    if (branch_expanded && n->child != NULL) {
+      int a;
+
+      n->expand_icon.bbox.xmin = x;
+      n->expand_icon.bbox.xmax = x + EXPAND_ICON_XSIZE;
+
+      a = (height - EXPAND_ICON_YSIZE) / 2;
+      n->expand_icon.bbox.ymin = y - height + a;
+      n->expand_icon.bbox.ymax = n->expand_icon.bbox.ymin + EXPAND_ICON_YSIZE;
+    }
+
+    x += EXPAND_ICON_XSIZE;
+  } else {
+    x += NO_EXPAND_ICON_XSIZE;
+  }
+
+  /* position sprite icon (if present)	*/
+  if (n->icon.flags != 0) {
+    int size = n->icon.bbox.xmax;
+
+    n->icon.bbox.xmin = x;
+    n->icon.bbox.xmax += x;
+    n->icon.bbox.ymin = y - height;
+    n->icon.bbox.ymax = y;
+
+    x += size + X_GAP;
+  }
+
+  /* position text icon (if present)	*/
+  if (n->text_icon.flags != 0) {
+    int size = n->text_icon.bbox.xmax;
+
+    n->text_icon.bbox.xmin = x;
+    n->text_icon.bbox.xmax += x;
+    n->text_icon.bbox.ymin = y - height;
+    n->text_icon.bbox.ymax = y;
+
+    x += size;
+  }
+
+  /* calculate overall bounding box for this node's icons	*/
+  calc_overall_bbox(n);
+
+  /* calculate proper new y coordinate from the node size	*/
+  y -= n->height;
+
+  DEBUG(DEBUGLEVEL, ("layout_icon_tree: Node: %p (%s)  Max x so far: %d  our max x: %d\n", (void *)n, debug_node_text(n), *r_xmax, x));
+
+  if (*r_xmax < x) *r_xmax = x;
+
+  return y;
+}
+
+
+/* Called with the parent node of the part of the tree to be drawn	*/
+/* IE the root node if this is the first call.				*/
+void make_icons_tree(PrivateTreeView *me, TreeNode *parent, int x, int y,
+int *r_xmax, int *r_y, int branch_expanded) {
+  TreeNode *n;
+
+  if (parent->child == NULL) return;
+
+  make_sorted_list(me, parent->child);
+
+  for (n = parent->sorted.child; n != NULL; n = n->sorted.next) {
+
+    if (branch_expanded) {
+      make_sprite_icon(me, n);
+    } else {
+      DEBUG(DEBUGLEVEL, ("Node %p is hidden\n", (void *)n));
+      n->icon.flags = 0;
+      n->icon.bbox.xmin = INT_MAX;
+      n->icon.bbox.ymin = INT_MAX;
+      n->icon.bbox.xmax = -1;
+      n->icon.bbox.ymax = -1;
+    }
+
+    if (branch_expanded && n->text != NULL && strlen(n->text) > 0) {
+      make_text_icon(me, n);
+    } else {
+      n->text_icon.flags = 0;
+      n->text_icon.bbox.xmin = INT_MAX;
+      n->text_icon.bbox.ymin = INT_MAX;
+      n->text_icon.bbox.xmax = -1;
+      n->text_icon.bbox.ymax = -1;
+    }
+
+    if (branch_expanded && (me->flags & TreeView_AllowExpand) && n->child != NULL) {
+      make_expand_icon(me, n);
+    } else {
+      /* set bbox out of the area so it's not found when a mouse click occurs	*/
+      n->expand_icon.flags = 0;
+      n->expand_icon.bbox.xmin = INT_MAX;
+      n->expand_icon.bbox.ymin = INT_MAX;
+      n->expand_icon.bbox.xmax = -1;
+      n->expand_icon.bbox.ymax = -1;
+    }
+
+    if (me->flags & TreeView_TextBelowSprite) {
+      y = layout_icon_tree_1(me, n, x, y, branch_expanded, r_xmax);
+    } else {
+      y = layout_icon_tree_2(me, n, x, y, branch_expanded, r_xmax);
+    }
+
+    /* Recursion may not be such a good idea in SVC mode		*/
+    if (n->child != NULL) {
+      make_icons_tree(me, n, x + EXPAND_ICON_XSIZE, y, r_xmax, r_y, n->expand_child);
+      if (n->expand_child != 0) y = *r_y;
+    } // end if (child)
+
+  } // end for (node)
+
+  *r_y = y;
+}

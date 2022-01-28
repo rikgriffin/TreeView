@@ -1,0 +1,94 @@
+/* TreeView:DragBox.c		*/
+/* Rik Griffin Nov 2011		*/
+
+#include <stdlib.h>
+#include <string.h>
+
+#include "Main.h"
+
+
+#define DEBUGLEVEL	1
+
+
+typedef struct {
+  int	wimp_window;
+  int	left_pause_zone;
+  int	bottom_pause_zone;
+  int	right_pause_zone;
+  int	top_pause_zone;
+  int	pause_duration_cs;
+  unsigned int shape_change_handler;
+  void	*handle;
+} WimpAutoScrollBlock;
+
+
+_kernel_oserror *dragbox_start(PrivateTreeView *me, WimpMouseClickEvent *mouse) {
+  _kernel_oserror *e;
+  WimpGetWindowStateBlock state;
+  WimpDragBox drag;
+  WimpAutoScrollBlock scroll;
+  int flags;
+
+  state.window_handle = me->wimp_object;
+  ER(wimp_get_window_state(&state), e);
+
+  drag.wimp_window = me->wimp_object;
+  drag.drag_type = Wimp_DragBox_DragRubberDash;
+  drag.dragging_box.xmin = drag.dragging_box.xmax = mouse->mouse_x;
+  drag.dragging_box.ymin = drag.dragging_box.ymax = mouse->mouse_y;
+
+  /* expand the drag bbox to a large size in the scrollable directions	*/
+  drag.parent_box = state.visible_area;
+  if (me->scrollbars & TreeView_CanAutoHScroll) {
+    drag.parent_box.xmin -= 0x7fff;
+    drag.parent_box.xmax += 0x7fff;
+  } else {
+    drag.parent_box.xmin += 2;
+  }
+  if (me->scrollbars & TreeView_CanAutoVScroll) {
+    drag.parent_box.ymin -= 0x7fff;
+    drag.parent_box.ymax += 0x7fff;
+  } else {
+    drag.parent_box.ymax -= 2;
+  }
+
+  drag.workspace = NULL;
+  drag.draw = NULL;
+  drag.remove = NULL;
+  drag.move = NULL;
+
+  DEBUG(DEBUGLEVEL, ("dragbox_start: parent area: %d,%d %d,%d\n", drag.parent_box.xmin, drag.parent_box.ymin, drag.parent_box.xmax, drag.parent_box.ymax));
+
+  ER(_swix(Wimp_DragBox, _INR(1,3), &drag, 'KSAT', 3), e);
+
+  DraggingTreeView = me;
+  DraggingButtons = mouse->buttons;
+  DraggingNode = NULL;
+  DraggingNodeCount = 0;
+
+  flags = (1<<2);	// send ScrollRequest
+  scroll.wimp_window = me->wimp_object;
+  scroll.left_pause_zone = scroll.right_pause_zone = 4;
+  scroll.bottom_pause_zone = scroll.top_pause_zone = 4;
+  scroll.pause_duration_cs = 0;
+  scroll.shape_change_handler = 1;
+  scroll.handle = NULL;
+
+  flags |= ((me->scrollbars & TreeView_CanAutoHScroll) != 0) << 0;
+  flags |= ((me->scrollbars & TreeView_CanAutoVScroll) != 0) << 1;
+  ER(_swix(Wimp_AutoScroll, _INR(0,1), flags, &scroll), e);
+
+  return NULL;
+
+
+/*
+fail:
+  DEBUG(0, ("dragbox failed: %s\n", e->errmess));
+
+  DraggingTreeView = NULL;
+  DraggingNode = NULL;
+  DraggingNodeCount = 0;
+
+  return e;
+*/
+}

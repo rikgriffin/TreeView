@@ -1,0 +1,83 @@
+/* Harness.Init.c		*/
+/* Rik Griffin Mar 2000		*/
+
+/* Initialisation, create toolbox objects etc	*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <locale.h>
+#include <string.h>
+
+#define __harness_init_c
+#include "Main.h"
+#include "Handlers.h"
+#include "MainWindow.h"
+
+static int Wimp_Messages[] = {
+  Wimp_MShutDown,
+  Wimp_MPreQuit,
+  Wimp_MFontChanged,
+  Wimp_MHelpRequest,
+  Wimp_MDataLoad,
+  Wimp_MDataSave,
+  Wimp_MDataSaveAck,
+  Wimp_MDataLoadAck,
+
+  Wimp_MQuit		// must be last
+};
+
+static int Toolbox_Events[] = {
+  0			// all events
+};
+
+static IdBlock		ID_Block;
+
+
+_kernel_oserror *initialise(void) {
+  _kernel_oserror *e;
+  setlocale(LC_ALL, "UK");	// required?
+  ER(toolbox_initialise(0, 380, Wimp_Messages, Toolbox_Events,
+       "<Harness$Dir>.Resources", &Messages, &ID_Block, &Wimp_Version,
+       &Task_Handle, (void **)&Sprite_Area), e);
+  ER(event_initialise(&ID_Block), e);
+  ER(event_set_mask( (1<<13) ), e);
+
+  return NULL;
+}
+
+
+_kernel_oserror *make_objects(void) {
+  _kernel_oserror *e;
+  int i;
+  char text[256];
+  _kernel_swi_regs r;
+
+  ER(toolbox_create_object(0, "Menu", &Objects.Menu), e);
+  ER(toolbox_create_object(0, "MainWindow", &Objects.MainWindow), e);
+  for (i = 0; i < MAINPANE_COUNT; i++) {
+    sprintf(text, "Pane%d", i);
+    ER(toolbox_create_object(0, text, &Objects.MainPane[i]), e);
+  }
+
+  /* lookup module name and version	*/
+  r.r[0] = 18;
+  r.r[1] = (int) "TreeView";
+  ER(_kernel_swi(OS_Module, &r, &r), e);
+
+  strcpy(text, (char *)(r.r[3] + *(int *)(r.r[3] + 0x14)));
+  for (i = 0; text[i] != '\0'; i++) if (text[i] < ' ') text[i] = ' ';
+
+  ER(window_set_title(0, Objects.MainWindow, text), e);
+
+  /* set up any initial state for the gadgets under test here	*/
+
+  return NULL;
+}
+
+
+_kernel_oserror *register_events(void) {
+  _kernel_oserror *e;
+  ER(handlers_register_events(), e);
+  ER(mainwindow_show(), e);
+  return NULL;
+}

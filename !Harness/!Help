@@ -1,0 +1,57 @@
+This is a simple test harness for the TreeView gadget.
+
+It also serves as a simple demonstration for the Tabs gadget, so you'll
+need both modules to run it.
+
+Source is included and as of 17 Sep 2008 I've removed the dependencies on a
+library that wasn't supplied, so you should be able to recompile the
+program. Feel free to use any part of the source code in your own programs
+if you wish.
+
+
+Using this application:
+
+The tabs at the top of the window are provided by the Tabs gadget
+module. All you can do is click them and see the different panes be
+displayed automatically. The application doesn't need to do anything to
+achieve this, in fact you can load the resource file into !ResTest to see
+the same effect,
+
+The option icons in the lower half of the window allow you to modify the
+gadget's flags. Click the "Get" button to reflect the current flags in the
+icons and click "Set" to update the gadget's flags from the icons. The
+faded option buttons represent flags that are not yet implemented.
+
+The 4 buttons labelled "parent", "prev", "next" and "child" allow you to
+move the tree's current node around. If you set the "show current node"
+flag, the current node will be higlighted with a border. This is mainly
+intended for debugging purposes.
+
+The two buttons "add node as sibling" and "add node as child" alllow you to
+add a new node to the tree relative to the position of the current node.
+Enter the new node's text in the first writable icon, its sprite name in
+the second and the expanded sprite name in the third box. There's no
+facility to set the sprite area used (in the harness) so it will always use
+the Wimp sprite pool.
+
+The buttons "get first selected" and "get next selected" enumerate through
+the tree's selected nodes, returning the data about the node into the
+writable icons.
+
+You can drag a directory from the filer to the harness window and the
+application will create a tree reflecting the directory structure. If you
+shift drag a directory, only the first level of the directory structure (ie
+the contents of the directory but not its subdirectories) will be added to
+the tree.
+
+If you ALT-drag any object from a filer window to the TreeView, the
+application will report over which node the drag ended (demonstrating the
+use of TreeView_FindNode).
+
+The button at the right labelled "expand" calls TreeView_ExpandNode,
+expanding or collapsing the current node, according to the option buttons
+underneath the action button.
+
+The button labelled "select" calls TreeView_SelectNode, selecting or
+deselecting the current node, according to the option buttons underneath
+the action button.

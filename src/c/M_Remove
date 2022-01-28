@@ -1,0 +1,43 @@
+/* TreeView:M_Remove.c		*/
+/* Rik Griffin Oct 2003		*/
+
+#include "Main.h"
+#include "Tree.h"
+
+
+#define DEBUGLEVEL	1
+
+
+_kernel_oserror *gadget_remove(int recurse_flag, PrivateTreeView *me) {
+
+  IGNORE(recurse_flag);
+
+  /* remove the gadget being deleted from our list	*/
+//  if ((e = remove_redraw_handler(me)) != NULL) return e;
+
+/*
+  if (me->font_handle != 0) font_lose_font(me->font_handle);
+*/
+
+  /* Get the toolbox to uninstall the post filters	*/
+  remove_task_interest(GLib_WimpEvents, Filter_WimpEvents);
+//  remove_task_interest(GLib_ToolboxEvents, Filter_ToolboxEvents);
+//  remove_task_interest(GLib_WimpMessages, Filter_WimpMessages);
+
+  remove_treeview_from_list(me);
+  _delete_all_selection(me);
+
+  /* This deletes everything except the root node	*/
+  (void) tree_delete_node(me, me->root_node);
+
+  _mem_free(me->root_node);
+
+  /* delete our window	*/
+  toolbox_delete_object(0, me->object_id);
+
+  _mem_free(me);
+
+  DEBUG(DEBUGLEVEL, ("Deleted treeview gadget handle %p\n", (void *)me));
+
+  return NULL;
+}

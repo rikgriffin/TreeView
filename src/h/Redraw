@@ -1,0 +1,25 @@
+/* TreeView:Redraw.h		*/
+/* Rik Griffin Aug 2008		*/
+
+extern void shellsort(PrivateTreeView *me, int N, TreeNode **list);
+extern void make_sorted_list(PrivateTreeView *me, TreeNode *start);
+
+//extern BBox *combined_bbox(PrivateTreeView *me, TreeNode *n);
+
+/*
+ * Calculate overall bounding box for this node's icons
+ * Also calculates n->width and n->height
+*/
+extern void calc_overall_bbox(TreeNode *n);
+
+extern void wimp_event_redraw(PrivateTreeView *me, WimpRedrawWindowRequestEvent *event);
+extern _kernel_oserror *_make_icons(PrivateTreeView *me, int redraw);
+
+extern void make_icons_tree(PrivateTreeView *me, TreeNode *start, int xbase, int ybase,
+int *xmax_ret, int *y_ret, int branch_expanded);
+
+extern int make_icons_flat(PrivateTreeView *me, TreeNode *start, int xbase, int ybase, int xextent, int *r_yextent);
+
+extern void plot_node_tree(WimpRedrawWindowBlock *block, PrivateTreeView *me, TreeNode *start);
+
+extern void plot_node_flat(WimpRedrawWindowBlock *block, PrivateTreeView *me, TreeNode *start);

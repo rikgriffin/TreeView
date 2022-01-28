@@ -1,0 +1,324 @@
+/* TreeView:Drag.c		*/
+/* Rik Griffin Mar 2004		*/
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+
+#include "Main.h"
+
+#define DEBUG_LEVEL	1
+
+static unsigned int *save_area = NULL;
+
+static void *make_table(SpriteArea *area, SpriteCtrlBlock *sprite) {
+  _kernel_oserror *e;
+  void *table = NULL;
+  int size;
+  unsigned int flags = (1<<4) | (1<<0);
+
+  if ((int) area == 1) return NULL;
+
+  EL(_swix(ColourTrans_SelectTable, _INR(0,7) | _OUT(4), area, sprite, -1, -1, 0,
+    flags, 0, 0, &size), e, fail);
+
+  DEBUG(DEBUG_LEVEL, ("ColourTrans_SelectTable: size = %d\n", size));
+
+  if ((table = _mem_allocate(size)) == NULL) return NULL;
+
+  EL(_swix(ColourTrans_SelectTable, _INR(0,7), area, sprite, -1, -1, table, flags, 0,
+    0), e, fail);
+
+  DEBUG(DEBUG_LEVEL, ("Made translation table at %p\n", (void *)table));
+
+  return table;
+
+fail:
+  DEBUG(0, ("Error in make_table: %s\n", e->errmess));
+  _mem_free(table);
+  return NULL;
+}
+
+
+/* The sprite passed to DragASprite needs to be same pixel depth as screen	*/
+/* This fn makes the sprite and returns its size in OS units in xsize and ysize	*/
+static SpriteArea *make_drag_sprite(PrivateTreeView *me, TreeNode *node, int *xsize, int *ysize) {
+  _kernel_oserror *e = NULL;
+  SpriteArea *area = NULL, *src_area;
+  SpriteCtrlBlock *sprite, *src_spr;
+  int log2bpp, a = 0, b, c, d, size;
+  int spr_xs = 0, spr_ys = 0, txt_xs = 0, txt_ys = 0, xs, ys;
+  int spr_x, spr_y, txt_x, txt_y;
+  void *table = NULL;
+  char *text_ptr = NULL;
+
+  /* find pixel depth of screen			*/
+  EL(_swix(OS_ReadModeVariable, _INR(0,1) | _OUT(2), -1, 9, &log2bpp), e, fail);
+
+  /* find the sprite area and ctrl block ptrs of the source sprite	*/
+  /* The sprite may not exist, which is OK				*/
+  if ((int)node->sprite_area == 1) {
+    e = rikslib_find_wimp_sprite(node->sprite, &src_area, &src_spr);
+  } else {
+    src_area = node->sprite_area;
+    e = _swix(OS_SpriteOp, _INR(0,2) | _OUT(2), 0x118, src_area, node->sprite, &src_spr);
+  }
+
+  /* find size of node text in PIXELS, if there is any	*/
+  if (node->text_icon.flags != 0 && node->text != NULL) {
+    txt_xs = (node->text_icon.bbox.xmax - node->text_icon.bbox.xmin) >> ScreenXEig;
+    txt_ys = (node->text_icon.bbox.ymax - node->text_icon.bbox.ymin) >> ScreenYEig;
+    text_ptr = node->text;
+  }
+  /* find size of sprite in PIXELS			*/
+  if (node->icon.flags != 0) {
+    spr_xs = (node->icon.bbox.xmax - node->icon.bbox.xmin) >> ScreenXEig;
+    spr_ys = (node->icon.bbox.ymax - node->icon.bbox.ymin) >> ScreenYEig;
+  }
+
+  if (e != NULL) {
+    src_area = NULL;
+    src_spr = NULL;
+  } else {
+    /* make translation table		*/
+    table = make_table(src_area, src_spr);
+  }
+
+  /* Sizes are in pixels, coordinates need to be in OS units	*/
+  if ((me->flags & TreeView_TextBelowSprite) && src_area != NULL) {
+    ys = spr_ys + (txt_ys > 0 ? txt_ys + 4 : 0);
+    xs = spr_xs > txt_xs ? spr_xs : txt_xs;
+
+    txt_x = 2 + (xs - txt_xs) / 2;
+    txt_y = 4;
+    spr_x = (xs - spr_xs) / 2;
+    spr_y = txt_ys + 4;
+  } else {
+    /* text to right of sprite	*/
+    ys = spr_ys > txt_ys ? spr_ys : txt_ys;
+    xs = spr_xs + (txt_xs > 0 ? txt_xs + 4 : 0);
+    txt_x = spr_xs + 8;
+    txt_y = 2 + (ys - txt_ys) / 2;
+    if (src_area != NULL) txt_y += 2;
+    spr_x = 0;
+    spr_y = (ys - spr_ys) / 2;
+  }
+  txt_x <<= ScreenXEig;
+  txt_y <<= ScreenYEig;
+  spr_x <<= ScreenXEig;
+  spr_y <<= ScreenYEig;
+
+  DEBUG(DEBUG_LEVEL, ("Source sprite: %p  size %d x %d\nText size: %d x %d\n",
+    (void *)src_spr, spr_xs, spr_ys, txt_xs, txt_ys));
+
+  /* make a new sprite to plot the bits into (add extra for mask)	*/
+  size = sizeof(SpriteArea) + sizeof(SpriteCtrlBlock) + (xs * ys * 5);
+  if ((area = _mem_allocate(size)) == NULL) goto nomem;
+  area->size = size;
+  area->num_sprites = 0;
+  area->sprite_offset = 16;
+  area->free_offset = 16;
+  EL(_swix(OS_SpriteOp, _INR(0,1), 0x109, area), e, fail);
+  DEBUG(DEBUG_LEVEL, ("Allocated sprite area at %p  size %d\n", (void *)area, size));
+
+  /* create sprite, same bpp as the current screen mode		*/
+  EL(_swix(OS_SpriteOp, _INR(0,6), 0x10f, area, "temp", 0, xs, ys,
+    1 | (90<<1) | (90<<14) | ((log2bpp+1)<<27) ), e, fail);
+  /* get sprite pointer		*/
+  EL(_swix(OS_SpriteOp, _INR(0,2) | _OUT(2), 0x118, area, "temp", &sprite), e, fail);
+  /* add a mask			*/
+//  EL(_swix(OS_SpriteOp, _INR(0,2), 0x21d, area, sprite), e, fail);
+
+  DEBUG(DEBUG_LEVEL, ("Destination sprite: %p  size %d x %d\n", (void *)sprite, xs, ys));
+
+  /* read save area size	*/
+  if (save_area == NULL) {
+    int save_size;
+
+    EL(_swix(OS_SpriteOp, _INR(0,2) | _OUT(3), 0x23e, area, sprite, &save_size),
+      e, fail);
+    if ((save_area = _mem_allocate(save_size)) == NULL) goto nomem;
+    save_area[0] = 0;
+    DEBUG(DEBUG_LEVEL, ("allocated save area size %d at %p\n", save_size, (void *)save_area));
+  }
+
+  /* switch output to sprite	*/
+  EL(_swix(OS_SpriteOp, _INR(0,3) | _OUTR(0,3), 0x23c, area, sprite, save_area,
+    &a, &b, &c, &d), e, fail);
+
+  _swix(ColourTrans_SetGCOL, _IN(0) | _INR(3,4), 0xe0e0e000, (1<<7), 0);
+  _swix(ColourTrans_SetGCOL, _IN(0) | _INR(3,4), 0x00000000, 0, 0);
+  _swix(OS_WriteC, _IN(0), 26);	// restore viewports
+  _swix(OS_WriteC, _IN(0), 16);	// clg
+
+  if (src_area != NULL) {
+    /* plot sprite		*/
+    EL(_swix(OS_SpriteOp, _INR(0,7), 0x234, src_area, src_spr, spr_x, spr_y, (1<<5)|8, 0, table), e, fail);
+    DEBUG(DEBUG_LEVEL, ("  plotted sprite\n"));
+  }
+
+  if (text_ptr != NULL) {
+    /* set text colours	*/
+    _swix(Wimp_TextOp, _INR(0,2), 0, 0x00000000, 0xe0e0e000);
+    /* plot text		*/
+    _swix(Wimp_TextOp, _INR(0,5), 2, text_ptr, -1, -1, txt_x, txt_y);
+    DEBUG(DEBUG_LEVEL, ("  plotted text\n"));
+  }
+
+  /* restore output context	*/
+  EL(_swix(OS_SpriteOp, _INR(0,3), a, b, c, d), e, fail);
+  a = 0;
+
+//  if (src_area != NULL && src_spr->image_offset != src_spr->mask_offset) {
+//    /* set mask all transparent	*/
+//    memset((char *)sprite + sprite->mask_offset, 0, xs * ys / 8);
+//
+//    /* switch output to mask	*/
+//    EL(_swix(OS_SpriteOp, _INR(0,3) | _OUTR(0,3), 0x23d, area, sprite, save_area,
+//      &a, &b, &c, &d), e, fail);
+//
+//    _swix(OS_WriteC, _IN(0), 26);	// restore viewports
+//    _swix(OS_WriteC, _IN(0), 16);	// clg
+//
+//    /* plot mask			*/
+//    _swix(OS_SetColour, _INR(0,1), (1<<4), 1);
+//    EL(_swix(OS_SpriteOp, _INR(0,4), 0x231, src_area, src_spr, 0, 0), e, fail);
+//  }
+//
+//  /* restore output context	*/
+//  EL(_swix(OS_SpriteOp, _INR(0,3), a, b, c, d), e, fail);
+//  a = 0;
+
+  /*
+   * Save sprite (test only)
+  */
+  #if Debug_On
+  char name[256];
+  snprintf(name, 256, "ram::0.$.drag-%dx%d", xs, ys);
+  _swix(OS_SpriteOp, _INR(0,2), 0x10c, area, name);
+  #endif
+
+  _mem_free(table);
+  table = NULL;
+
+  *xsize = xs << ScreenXEig;
+  *ysize = ys << ScreenYEig;
+
+exit:
+  return area;
+
+fail:
+  if (a != 0) {
+    (void) _swix(OS_SpriteOp, _INR(0,3), a, b, c, d);
+  }
+  DEBUG(0, ("Error in make_drag_sprite: %s\n", e->errmess));
+  _mem_free(area); area = NULL;
+  _mem_free(table); table = NULL;
+  goto exit;
+
+nomem:
+  DEBUG(0, ("malloc failed in make_drag_sprite"));
+  _mem_free(area); area = NULL;
+  _mem_free(table); table = NULL;
+  goto exit;
+}
+
+
+_kernel_oserror *drag_start(PrivateTreeView *me, TreeNode *node, WimpMouseClickEvent *mouse) {
+  _kernel_oserror *e;
+  int xs, ys, count;
+  SpriteArea *area = NULL;
+  char *sprite;
+  BBox box;
+
+  DEBUG(0, ("Start drag, node: %p\n", (void *)node));
+
+  if ((count = selection_node_count(me)) > 1) {
+    area = (void *) 1;
+    sprite = "package";
+
+    /* get 'package' size	*/
+    EL(_swix(Wimp_SpriteOp, _INR(0,2) | _OUTR(3,4), 0x128, 0, sprite, &xs, &ys), e, fail);
+
+    box.xmin = mouse->mouse_x - xs / 2;
+    box.ymin = mouse->mouse_y - ys / 2;
+  } else {
+    WimpGetWindowStateBlock state;
+
+    if ((area = make_drag_sprite(me, node, &xs, &ys)) == NULL) return NULL;
+    sprite = "temp";
+
+    state.window_handle = me->wimp_object;
+    ER(wimp_get_window_state(&state), e);
+
+    box.xmin = state.visible_area.xmin - state.xscroll;
+    box.ymin = state.visible_area.ymax - state.yscroll;
+
+    /*
+     * The BBox is the start location of the drag. This depends on whether
+     * the node has a sprite, text or both
+    */
+    bool have_text = (node->text_icon.flags != 0 && node->text != NULL);
+    bool have_sprite = (node->icon.flags != 0);
+    bool text_below_sprite = (me->flags & TreeView_TextBelowSprite);
+
+    if (have_text && !have_sprite) {
+      box.xmin += node->text_icon.bbox.xmin;
+      box.ymin += node->text_icon.bbox.ymin;
+      DEBUG(DEBUG_LEVEL, ("  node has text only\n"));
+
+    } else if (!have_text && have_sprite) {
+      box.xmin += node->icon.bbox.xmin;
+      box.ymin += node->icon.bbox.ymin;
+      DEBUG(DEBUG_LEVEL, ("  node has sprite only\n"));
+
+    } else {
+      /*
+       * both text and sprite present
+      */
+      if (text_below_sprite) {
+        box.xmin += node->text_icon.bbox.xmin;
+        box.ymin += node->text_icon.bbox.ymin;
+      } else {
+        box.xmin += node->icon.bbox.xmin;
+        box.ymin += node->icon.bbox.ymin;
+      }
+      DEBUG(DEBUG_LEVEL, ("  node has text and sprite\n"));
+    }
+  }
+
+  box.xmax = box.xmin + xs;
+  box.ymax = box.ymin + ys;
+  DEBUG(DEBUG_LEVEL, ("drag box: %d %d  %d %d\n", box.xmin, box.ymin, box.xmax, box.ymax));
+
+  EL(_swix(DragASprite_Start, _INR(0,4),
+    (1<<0) | (1<<2) | (0<<4) | (0<<6) | (1<<7) | (0<<8),
+    area, sprite, &box, 0), e, fail);
+
+  DEBUG(DEBUG_LEVEL, ("started drag, %d nodes, sprite area %p name %s\n", count, (void *)area, sprite));
+
+  if (count == 1) {
+    _mem_free(area);
+  }
+
+  DraggingTreeView = me;
+  DraggingNode = node;
+  DraggingNodeCount = count;
+  DraggingButtons = mouse->buttons;
+
+  /* ensure the node being dragged is selected	*/
+  if (find_selection_node(me, node) == NULL) {
+    _select_node(me, node, SELECT_SELECT, NO_RECURSE);
+    _update_selected_nodes(me);
+  }
+  return NULL;
+
+fail:
+  DEBUG(0, ("drag failed: %s\n", e->errmess));
+
+  DraggingTreeView = NULL;
+  DraggingNode = NULL;
+  DraggingNodeCount = 0;
+  _mem_free(area);
+  return e;
+}

@@ -1,0 +1,6 @@
+/* TreeView:TreeFind.h		*/
+/* Rik Griffin Dec 2011		*/
+
+extern TreeNode *tree_find_node_at_coords(PrivateTreeView *me, int x, int y, int *icon);
+extern TreeNode *tree_find_node_in_bbox(PrivateTreeView *me, TreeNode *node, BBox *box);
+extern int FindNodeCount;

@@ -1,0 +1,303 @@
+/* TreeView:Redraw.c		*/
+/* Rik Griffin Nov 2003		*/
+
+#include <string.h>
+#include <limits.h>
+
+#include "Main.h"
+#include "Redraw.h"
+
+
+#define DEBUGLEVEL	2
+
+
+static int Comp = 0;
+
+
+static int compare(PrivateTreeView *me, TreeNode *a, TreeNode *b) {
+  char *a1, *a2, *b1, *b2;
+  int r;
+
+  ++Comp;
+
+  if (a == NULL && b == NULL) return 0;
+  if (a == NULL) return -1;
+  if (b == NULL) return 1;
+
+  if (me->flags & TreeView_SortBySprite) {
+    a1 = a->sprite;
+    a2 = a->text == NULL ? "" : a->text;
+    b1 = b->sprite;
+    b2 = b->text == NULL ? "" : b->text;
+  } else {
+    a1 = a->text == NULL ? "" : a->text;
+    a2 = a->sprite;
+    b1 = b->text == NULL ? "" : b->text;
+    b2 = b->sprite;
+  }
+
+  r = rikslib_strcmp_nc(a1, b1);
+  if (r == 0) r = rikslib_strcmp_nc(a2, b2);
+
+  if (me->flags & TreeView_SortReversed) r = -r;
+
+  return r;
+}
+
+
+void shellsort(PrivateTreeView *me, int N, TreeNode **list) {
+  int i, j, h;
+  TreeNode *v;
+
+  Comp = 0;
+
+//  for (h = 1; h < N / 9; h = 3 * h);
+  h = N / 2;
+
+  while (h > 0) {
+    for (i = h; i < N; i++) {
+      v = list[i];
+      j = i;
+
+      while (j >= h && compare(me, list[j - h], v) > 0) {
+        list[j] = list[j - h];
+        j -= h;
+      }
+      list[j] = v;
+    }
+    if (h == 2) h = 1;
+    else h = (h * 10) / 22;
+  }
+
+//  DEBUG(0, ("Shellsort: %d comparisons\n", Comp));
+}
+
+
+/* populate the list in start->parent->sorted_child_list with a list of	*/
+/* node handles (ie pointers) sorted into some order.			*/
+#if 0
+void make_display_list(PrivateTreeView *me, TreeNode *start) {
+  TreeNode *n, *p;
+  int i;
+
+  p = start->parent;
+
+  if (p->sorted_child_list == NULL) {
+    DEBUG(0, ("Node %x (%s) has no sorted child list\n", p, debug_node_text(p)));
+    return;
+  }
+
+  /* fill in the list	*/
+  for (i = 0, n = start; n != NULL; n = n->next) {
+    p->sorted_child_list[i++] = n;
+  }
+
+  if (Debug_Level >= 2) {
+    DEBUG(DEBUGLEVEL, ("Made unsorted list of %d nodes (should be %d)\n", i, p->child_count));
+    for (i = 0; i < p->child_count; i++) {
+      DEBUG(DEBUGLEVEL, ("  %d : %s\n", i, debug_node_text(p->sorted_child_list[i])));
+    }
+  }
+
+  if (me->flags & TreeView_SortDisplay) {
+    if (p->child_count > 1) {
+      shellsort(me, p->child_count, p->sorted_child_list);
+    }
+
+    if (Debug_Level >= 2) {
+      DEBUG(DEBUGLEVEL, ("Node '%s' has these children:\n", debug_node_text(p)));
+      for (i = 0; i < p->child_count; i++) {
+        DEBUG(DEBUGLEVEL, ("  %d : %s\n", i, debug_node_text(p->sorted_child_list[i])));
+      }
+    }
+  }
+}
+#endif
+
+
+void make_sorted_list(PrivateTreeView *me, TreeNode *start) {
+  TreeNode *n, *p, *list[start->parent->child_count+1];
+  int i;
+
+  p = start->parent;
+
+  if (p->sorted.valid) {
+    DEBUG(DEBUGLEVEL, ("make_sorted_list: node %p (%s) children already sorted\n", (void *)p, debug_node_text(p)));
+    return;
+  }
+
+  if (start->parent->child_count == 0) {
+    DEBUG(0, ("make_sorted_list: parent has no children\n"));
+    return;
+  }
+
+  /* fill in the list	*/
+  for (i = 0, n = start; n != NULL; n = n->next) {
+    list[i++] = n;
+  }
+
+  if (Debug_Level >= DEBUGLEVEL) {
+    DEBUG(DEBUGLEVEL, ("Made unsorted list of %d nodes (should be %d)\n", i, p->child_count));
+    for (i = 0; i < p->child_count; i++) {
+      DEBUG(DEBUGLEVEL, ("  %d : %s\n", i, debug_node_text(list[i])));
+    }
+  }
+
+  if (me->flags & TreeView_SortDisplay) {
+    if (p->child_count > 1) {
+      shellsort(me, p->child_count, list);
+    }
+
+    if (Debug_Level >= DEBUGLEVEL) {
+      DEBUG(DEBUGLEVEL, ("Node '%s' sorted childred:\n", debug_node_text(p)));
+      for (i = 0; i < p->child_count; i++) {
+        DEBUG(DEBUGLEVEL, ("  %d : %s\n", i, debug_node_text(list[i])));
+      }
+    }
+  } // end if (sort)
+
+  /* Fill in the linked list	*/
+  list[p->child_count] = NULL;
+
+  p->sorted.child = list[0];
+
+  list[0]->sorted.prev = NULL;
+  list[0]->sorted.next = list[1];
+
+  for (i = 1; i < p->child_count; i++) {
+    list[i]->sorted.prev = list[i - 1];
+    list[i]->sorted.next = list[i + 1];
+  }
+
+  p->sorted.valid = 1;
+}
+
+
+/*
+ * Expands box1 so that it contains box2
+*/
+static void largest_bbox(BBox *box1, BBox *box2) {
+  if (box2->xmin < box1->xmin) box1->xmin = box2->xmin;
+  if (box2->ymin < box1->ymin) box1->ymin = box2->ymin;
+
+  if (box2->xmax > box1->xmax) box1->xmax = box2->xmax;
+  if (box2->ymax > box1->ymax) box1->ymax = box2->ymax;
+}
+
+
+/*
+ * Calculate overall bounding box for this node's icons
+ * Also calculates n->width and n->height
+*/
+void calc_overall_bbox(TreeNode *n) {
+
+  n->obox.xmin = n->obox.ymin = INT_MAX;
+  n->obox.xmax = n->obox.ymax = -INT_MAX;
+
+  if (n->icon.flags) largest_bbox(&n->obox, &n->icon.bbox);
+
+  if (n->text_icon.flags) largest_bbox(&n->obox, &n->text_icon.bbox);
+
+  if (n->expand_icon.flags) largest_bbox(&n->obox, &n->expand_icon.bbox);
+
+  n->width = n->obox.xmax - n->obox.xmin;
+  n->height = n->obox.ymax - n->obox.ymin;
+}
+
+
+/* Called on interception of a Wimp_ERedrawWindow event	*/
+void wimp_event_redraw(PrivateTreeView *me, WimpRedrawWindowRequestEvent *event) {
+//  _kernel_oserror *e;
+  int more;
+  WimpRedrawWindowBlock	block;
+
+  DEBUG(DEBUGLEVEL, ("redraw %x %x\n", me->wimp_object, event->window_handle));
+
+  _swix(OS_Byte, _INR(0,2), 163, 242, 0);	// reset dash pattern to default
+
+  block.window_handle = event->window_handle;
+  wimp_redraw_window(&block, &more);
+
+  while (more) {
+    DEBUG(DEBUGLEVEL, ("redraw box %d %d %d %d\n", block.redraw_area.xmin,
+      block.redraw_area.ymin, block.redraw_area.xmax, block.redraw_area.ymax));
+    DEBUG(DEBUGLEVEL, ("visible_area %d %d %d %d\n", block.visible_area.xmin,
+      block.visible_area.ymin, block.visible_area.xmax, block.visible_area.ymax));
+
+    if (me->flags & TreeView_FlatMode) {
+      plot_node_flat(&block, me, me->root_node->child);
+    } else {
+      plot_node_tree(&block, me, me->root_node);
+    }
+
+    wimp_get_rectangle(&block, &more);
+  }
+
+  return;
+}
+
+
+_kernel_oserror *_force_redraw(PrivateTreeView *me) {
+  WimpGetWindowStateBlock state;
+  _kernel_oserror *e;
+  BBox box;
+
+  state.window_handle = me->wimp_object;
+  ER(wimp_get_window_state(&state), e);
+
+  box.xmin = 0 + state.xscroll;
+  box.ymax = 0 + state.yscroll;
+  box.xmax = me->box.xmax - me->box.xmin + state.xscroll;
+  box.ymin = me->box.ymax + me->box.ymin + state.yscroll;
+
+  return window_force_redraw(0, me->object_id, &box);
+}
+
+
+/* force a redraw of an individual node	*/
+_kernel_oserror *_force_redraw_node(PrivateTreeView *me, TreeNode *n) {
+  return window_force_redraw(0, me->object_id, &n->obox);
+}
+
+
+/* fills in the Wimp_PlotIcon data for all the nodes of a tree	*/
+/* uses recursion, which might be bad in SVC mode		*/
+/* 'redraw' is 1 to force a redraw, 2 to do one only if the	*/
+/* layout changes.						*/
+_kernel_oserror *_make_icons(PrivateTreeView *me, int redraw) {
+  _kernel_oserror *e;
+  int xextent = 0, yextent = 0, oldscroll;
+
+  if (me->flags & TreeView_FlatMode) {
+    xextent = me->box.xmax - me->box.xmin;
+    if (make_icons_flat(me, me->root_node->child, 0, 0, xextent, &yextent) == 0) {
+      if (redraw == 2) redraw = 0;
+    }
+  } else {
+    make_icons_tree(me, me->root_node, 0, 0, &xextent, &yextent, 1);
+    /* a small bottom border	*/
+    yextent -= me->vertical_spacing;
+  }
+
+  /* refresh the selection flags in the icons	*/
+  _update_selected_nodes(me);
+
+  DEBUG(DEBUGLEVEL, ("_make_icons: extent %d, %d\n", xextent, yextent));
+
+  me->x_extent = xextent;
+  me->y_extent = yextent;
+
+  /* Repeat until the scrollbars state doesn't change, to account for	*/
+  /* the change in the work area caused by adding scrollbars.		*/
+  do {
+    oldscroll = me->scrollbars;
+    ER(_update_extent(me), e);
+    ER(_show(me), e);
+  } while (me->scrollbars != oldscroll);
+
+  if (redraw != 0) {
+    ER(_force_redraw(me), e);
+  }
+
+  return NULL;
+}
